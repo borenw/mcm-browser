@@ -1,0 +1,386 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MCM / Package Browser — 2-D Layers + 3-D Stack</title>
+<style>
+ *{box-sizing:border-box}
+ body{margin:0;background:#F4F5F7;color:#172B4D;font-family:'Segoe UI',Arial,sans-serif;line-height:1.5}
+ .wrap{max-width:1320px;margin:0 auto;padding:0 18px 70px}
+ .banner{background:#0052CC;color:#fff;padding:18px 24px;border-radius:0 0 6px 6px;box-shadow:0 2px 6px rgba(9,30,66,.18)}
+ .banner h1{margin:0;font-size:22px;font-weight:600}
+ .banner p{margin:6px 0 0;opacity:.92;font-size:13.5px;max-width:1000px}
+ .grid{display:grid;grid-template-columns:250px 1fr 1fr;gap:14px;align-items:start;margin-top:16px}
+ @media(max-width:1080px){.grid{grid-template-columns:1fr}}
+ .card{border:1px solid #DFE1E6;border-radius:8px;padding:14px;background:#fff;box-shadow:0 1px 2px rgba(9,30,66,.06)}
+ h3{margin:0 0 10px;font-size:14px;color:#0052CC}
+ .sec{margin:16px 0 6px;font-size:12px;font-weight:700;color:#0052CC;text-transform:uppercase;letter-spacing:.4px;border-bottom:2px solid #DEEBFF;padding-bottom:3px}
+ .info{font-size:12px;color:#42526E;margin:2px 0}
+ .info b{color:#172B4D}
+ .layers{margin:2px 0}
+ .lyr{display:flex;align-items:center;gap:7px;padding:4px 5px;border-radius:5px;font-size:12.5px;cursor:default}
+ .lyr:hover{background:#F4F5F7}
+ .lyr .sw{width:14px;height:14px;border-radius:3px;flex:0 0 auto;border:1px solid rgba(0,0,0,.25)}
+ .lyr .nm{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+ .lyr input{cursor:pointer}
+ .lyr .solo{font-size:10px;border:1px solid #C1C7D0;background:#fff;border-radius:4px;padding:1px 5px;cursor:pointer;color:#5E6C84}
+ .lyr .solo.on{background:#0052CC;color:#fff;border-color:#0052CC}
+ .nets{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
+ .net{display:flex;align-items:center;gap:5px;font-size:12px;border:1px solid #DFE1E6;border-radius:12px;padding:3px 9px;cursor:pointer;background:#fff}
+ .net .d{width:11px;height:11px;border-radius:50%}
+ .net.on{outline:2px solid #0052CC;font-weight:600}
+ .toggles{display:flex;flex-wrap:wrap;gap:8px;font-size:12.5px;margin-top:4px}
+ .toggles label{display:flex;align-items:center;gap:5px;cursor:pointer}
+ button.act{border:1px solid #0052CC;background:#fff;color:#0052CC;border-radius:6px;padding:5px 10px;font-size:12px;font-weight:600;cursor:pointer;margin:3px 4px 0 0}
+ button.act:hover{background:#0052CC;color:#fff}
+ .viewhead{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+ .badge{display:inline-block;background:#FFF0B3;color:#974F0C;border:1px solid #FFE380;border-radius:4px;font-size:10.5px;font-weight:700;padding:2px 7px}
+ canvas{display:block;width:100%;border-radius:6px;background:#0d1117;touch-action:none;cursor:grab}
+ .rng{width:100%;accent-color:#0052CC}
+ label.ctl{display:block;margin:8px 0 2px;font-size:12px;font-weight:600;color:#42526E}
+ label.ctl .v{float:right;color:#0052CC}
+ .tip{position:fixed;pointer-events:none;background:#172B4D;color:#fff;font-size:11.5px;padding:3px 7px;border-radius:4px;opacity:0;transition:opacity .1s;z-index:20;white-space:nowrap}
+ .hint{font-size:11.5px;color:#6B778C;margin:6px 0 0}
+ details summary{cursor:pointer;font-weight:600;color:#0052CC;font-size:13px;padding:4px 0}
+ pre{background:#0B1324;color:#E6EDF3;padding:12px;border-radius:6px;overflow:auto;font-size:11.5px;line-height:1.45}
+ a{color:#0052CC}
+ footer{text-align:center;margin-top:20px;font-size:13px;color:#6B778C}
+</style></head><body>
+<div class="banner">
+  <h1>📦 MCM / Package Browser <span style="font-size:13px;font-weight:400;opacity:.85">— 2-D layers &amp; 3-D stack</span></h1>
+  <p>Browse a flip-chip <b>BGA-on-substrate</b> package: step through etch layers in 2-D, or orbit the exploded
+  3-D stack. Ships with a sample FCBGA; <b>Load JSON</b> to view a real design exported from a Cadence
+  <code>.mcm</code> (via <i>extracta</i> / IPC-2581 / ODB++ → this JSON schema).</p>
+</div>
+<div class="wrap">
+ <div class="grid">
+
+  <!-- ============ CONTROLS ============ -->
+  <div class="card">
+    <h3 id="pkgName">Package</h3>
+    <div class="info" id="pkgInfo"></div>
+
+    <div class="sec">Etch layers (top→bottom)</div>
+    <div class="layers" id="layerList"></div>
+    <div style="margin-top:6px">
+      <button class="act" id="allOn">All</button>
+      <button class="act" id="soloClr">Show all</button>
+    </div>
+
+    <div class="sec">Highlight net</div>
+    <div class="nets" id="netList"></div>
+
+    <div class="sec">Show</div>
+    <div class="toggles" id="compToggles">
+      <label><input type="checkbox" id="tBalls" checked> BGA balls</label>
+      <label><input type="checkbox" id="tBumps" checked> C4 bumps</label>
+      <label><input type="checkbox" id="tVias" checked> vias</label>
+      <label><input type="checkbox" id="tDie" checked> die</label>
+      <label><input type="checkbox" id="tPlanes" checked> planes</label>
+    </div>
+
+    <div class="sec">Load design</div>
+    <input type="file" id="file" accept=".json,application/json" style="font-size:12px">
+    <button class="act" id="loadSample" style="margin-top:6px">Reload sample</button>
+    <p class="hint">Expects the package-JSON schema (see notes below).</p>
+  </div>
+
+  <!-- ============ 2D ============ -->
+  <div class="card">
+    <div class="viewhead"><h3 style="margin:0">Figure 1 · 2-D layer view (top-down)</h3><span class="badge">DRAG PAN · WHEEL ZOOM</span></div>
+    <canvas id="c2d" height="560"></canvas>
+    <div style="margin-top:6px"><button class="act" id="fit2d">Fit</button>
+      <span class="hint" id="lyrNow" style="margin-left:6px"></span></div>
+  </div>
+
+  <!-- ============ 3D ============ -->
+  <div class="card">
+    <div class="viewhead"><h3 style="margin:0">Figure 2 · 3-D exploded stack</h3><span class="badge">DRAG ORBIT · WHEEL ZOOM</span></div>
+    <canvas id="c3d" height="560"></canvas>
+    <label class="ctl">Explode<span class="v" id="vExp">1.0×</span></label>
+    <input type="range" class="rng" id="exp" min="0.35" max="2.6" step="0.02" value="1.1">
+    <div style="margin-top:4px">
+      <button class="act" id="reset3d">Reset view</button>
+      <label style="font-size:12.5px;margin-left:6px"><input type="checkbox" id="spin"> auto-spin</label>
+    </div>
+    <p class="hint">Z is schematic (layers evenly spaced) — real dielectric/metal thicknesses aren't to scale.</p>
+  </div>
+ </div>
+
+ <details style="margin-top:16px" class="card">
+   <summary>Package-JSON schema &amp; how to get it from a real <code>.mcm</code></summary>
+   <p style="font-size:13px">A <code>.mcm</code> is Cadence Allegro APD/SiP's binary DB — not openable here. Export it to this neutral JSON
+   (units mm, origin at package center). One row per etch layer, plus die / bumps / balls / vias.</p>
+   <pre>{
+  "name": "MY_FCBGA 19x19",
+  "body": 19,                       // package body (mm, square)
+  "NET": { "GND":"#2f9e44", "VDD":"#e03131", "VDDIO":"#f08c00", "SIG":"#1c7ed6" },
+  "stack": [                        // TOP → BOTTOM
+    {"id":"SMT","name":"Soldermask top","type":"mask","color":"#12694a"},
+    {"id":"M1","name":"M1 die side","type":"signal","color":"#e8a13a"},
+    {"id":"M2","name":"M2 GND","type":"plane","net":"GND","color":"#c46a24"},
+    {"id":"CORE","name":"Core","type":"core","color":"#0c3b2c"},
+    {"id":"M3","name":"M3 PWR","type":"plane","net":"VDD","color":"#c46a24"},
+    {"id":"M4","name":"M4 ball side","type":"signal","color":"#e8a13a"},
+    {"id":"SMB","name":"Soldermask bot","type":"mask","color":"#12694a"}
+  ],
+  "die":  {"w":7,"h":7},
+  "bumps":[{"x":-2.6,"y":-2.6,"net":"GND"}, ...],       // C4, attach to M1
+  "balls":[{"x":-7,"y":-7,"net":"SIG"}, ...],           // BGA, on M4
+  "vias": [{"x":0,"y":0,"from":"M2","to":"M3","net":"GND","type":"pth"}, ...],
+  "layers": {                       // per etch-layer geometry
+    "M2": {"planes":[{"poly":[[-9,-9],[9,-9],[9,9],[-9,9]],"net":"GND"}],"traces":[],"pads":[]},
+    "M1": {"planes":[],"traces":[{"pts":[[0,0],[0.2,0.2]],"w":0.04,"net":"SIG"}],"pads":[{"x":0,"y":0,"r":0.12,"net":"SIG"}]}
+  }
+}</pre>
+   <p style="font-size:13px">Getting there from Allegro: <b>extracta</b> (ASCII pad/net/geometry dump) → map to this JSON;
+   or export <b>IPC-2581</b> (XML) / <b>ODB++</b> and convert. Balls/bumps/vias also drop straight out of the
+   component &amp; padstack reports.</p>
+ </details>
+
+ <footer><a href="https://borenw.github.io/" style="text-decoration:none;font-weight:600">Page 29 · Bo's Engineering Curriculum</a></footer>
+</div>
+<div class="tip" id="tip"></div>
+
+<script>
+"use strict";
+const $=id=>document.getElementById(id);
+// ---------------- sample package ----------------
+function buildSample(){
+  const NET={GND:'#2f9e44',VDD:'#e03131',VDDIO:'#f08c00',SIG:'#4dabf7'};
+  const stack=[
+   {id:'SMT', name:'Soldermask — top',     type:'mask',  color:'#12694a'},
+   {id:'M1',  name:'M1 — die / bump side', type:'signal',color:'#e8a13a'},
+   {id:'M2',  name:'M2 — GND plane',       type:'plane', net:'GND', color:'#c46a24'},
+   {id:'CORE',name:'Core — PTH',           type:'core',  color:'#0c3b2c'},
+   {id:'M3',  name:'M3 — PWR plane',       type:'plane', net:'VDD', color:'#c46a24'},
+   {id:'M4',  name:'M4 — ball side',       type:'signal',color:'#e8a13a'},
+   {id:'SMB', name:'Soldermask — bottom',  type:'mask',  color:'#12694a'},
+  ];
+  const body=19, R=body/2-0.5;
+  // BGA balls
+  const balls=[], pn=15, pp=1.0, off=(pn-1)/2*pp;
+  for(let i=0;i<pn;i++)for(let j=0;j<pn;j++){ const x=i*pp-off, y=j*pp-off;
+    const ring=Math.min(i,j,pn-1-i,pn-1-j);
+    const net = ring<2 ? 'SIG' : ((i+j)%2?'VDD':'GND'); balls.push({x,y,net}); }
+  // die + C4 bumps
+  const die={w:7,h:7};
+  const bumps=[], bn=14, bpp=0.4, boff=(bn-1)/2*bpp;
+  for(let i=0;i<bn;i++)for(let j=0;j<bn;j++){ const x=i*bpp-boff, y=j*bpp-boff;
+    const ring=Math.min(i,j,bn-1-i,bn-1-j);
+    const net = ring<2 ? 'SIG' : ((i+j)%2?'VDD':'GND'); bumps.push({x,y,net}); }
+  // vias
+  const vias=[];
+  balls.forEach(b=>vias.push({x:b.x,y:b.y,from:'M4',to:'M3',net:b.net,type:'uvia'}));
+  bumps.forEach(b=>vias.push({x:b.x,y:b.y,from:'M1',to:'M2',net:b.net,type:'uvia'}));
+  const gn=9, gp=1.7, goff=(gn-1)/2*gp;
+  for(let i=0;i<gn;i++)for(let j=0;j<gn;j++){ const x=i*gp-goff, y=j*gp-goff;
+    vias.push({x,y,from:'M2',to:'M3',net:((i+j)%2?'VDD':'GND'),type:'pth'}); }
+  // per-layer features
+  const L={}; stack.forEach(s=>L[s.id]={planes:[],traces:[],pads:[]});
+  const out=[[-R,-R],[R,-R],[R,R],[-R,R]];
+  L.M2.planes.push({poly:out,net:'GND'}); L.M3.planes.push({poly:out,net:'VDD'});
+  bumps.forEach(b=>L.M1.pads.push({x:b.x,y:b.y,r:0.12,net:b.net}));
+  balls.forEach(b=>L.M4.pads.push({x:b.x,y:b.y,r:0.28,net:b.net}));
+  vias.forEach(v=>{ const r=v.type==='pth'?0.16:0.09;
+    L[v.from].pads.push({x:v.x,y:v.y,r,net:v.net,via:1}); L[v.to].pads.push({x:v.x,y:v.y,r,net:v.net,via:1}); });
+  bumps.forEach(b=>{ const a=Math.atan2(b.y,b.x)||0, d=0.16;
+    L.M1.traces.push({pts:[[b.x,b.y],[b.x+Math.cos(a)*d,b.y+Math.sin(a)*d]],w:0.045,net:b.net}); });
+  balls.forEach(b=>{ const a=Math.atan2(b.y,b.x)||0, d=0.32;
+    L.M4.traces.push({pts:[[b.x,b.y],[b.x+Math.cos(a)*d,b.y+Math.sin(a)*d]],w:0.07,net:b.net}); });
+  const nSig=stack.filter(s=>s.type==='signal'||s.type==='plane').length;
+  return {name:'DEMO FCBGA 19×19 (sample)', body, R, NET, stack, die, bumps, balls, vias, layers:L,
+    info:{metal:nSig, balls:balls.length, bumps:bumps.length, vias:vias.length}};
+}
+
+// ---------------- state ----------------
+let PKG, vis={}, solo=null, hlNet=null;
+const show={balls:true,bumps:true,vias:true,die:true,planes:true};
+const v2={s:1, ox:0, oy:0};
+const v3={az:-0.62, el:0.52, s:1, explode:1.1};
+function netCol(n){ return (PKG.NET&&PKG.NET[n])||'#adb5bd'; }
+function aFor(net,base){ return !hlNet?base : (net===hlNet? Math.min(1,base+0.4):base*0.12); }
+
+// ---------------- canvases / DPR ----------------
+function setup(cv){ const dpr=window.devicePixelRatio||1, w=cv.clientWidth, h=cv.clientHeight;
+  cv.width=w*dpr; cv.height=h*dpr; const ctx=cv.getContext('2d'); ctx.setTransform(dpr,0,0,dpr,0,0);
+  return {ctx,w,h}; }
+
+// ================= 2-D =================
+function fit2d(){ const cv=$('c2d'), w=cv.clientWidth,h=cv.clientHeight;
+  v2.s=Math.min(w,h)/(PKG.body*1.18); v2.ox=0; v2.oy=0; }
+function w2s(x,y,w,h){ return [w/2+(x-v2.ox)*v2.s, h/2-(y-v2.oy)*v2.s]; }
+function draw2d(){
+  const {ctx,w,h}=setup($('c2d'));
+  ctx.clearRect(0,0,w,h); ctx.fillStyle='#0d1117'; ctx.fillRect(0,0,w,h);
+  // board outline
+  const R=PKG.body/2; const p0=w2s(-R,-R,w,h), p1=w2s(R,R,w,h);
+  ctx.strokeStyle='#3d4756'; ctx.lineWidth=1; ctx.strokeRect(p0[0],p1[1],p1[0]-p0[0],p0[1]-p1[1]);
+  // draw layers bottom -> top
+  for(let k=PKG.stack.length-1;k>=0;k--){ const s=PKG.stack[k];
+    if(solo? solo!==s.id : !vis[s.id]) continue;
+    drawLayer2d(ctx,w,h,s);
+  }
+  // die outline ghost
+  if(show.die&&PKG.die){ const d=PKG.die, a=w2s(-d.w/2,-d.h/2,w,h), b=w2s(d.w/2,d.h/2,w,h);
+    ctx.strokeStyle='rgba(180,200,255,.55)'; ctx.setLineDash([5,4]); ctx.lineWidth=1.3;
+    ctx.strokeRect(a[0],b[1],b[0]-a[0],a[1]-b[1]); ctx.setLineDash([]);
+    ctx.fillStyle='rgba(180,200,255,.6)'; ctx.font='11px Segoe UI'; ctx.fillText('DIE '+d.w+'×'+d.h+'mm', a[0]+4, b[1]+13); }
+}
+function drawLayer2d(ctx,w,h,s){
+  const L=PKG.layers[s.id]||{planes:[],traces:[],pads:[]};
+  // mask layers: translucent resist wash
+  if(s.type==='mask'){ const R=PKG.R||PKG.body/2-0.5, a=w2s(-R,-R,w,h), b=w2s(R,R,w,h);
+    ctx.fillStyle='rgba(18,105,74,.16)'; ctx.fillRect(a[0],b[1],b[0]-a[0],a[1]-b[1]); }
+  // planes
+  if(show.planes) (L.planes||[]).forEach(pl=>{ ctx.beginPath();
+    pl.poly.forEach((pt,i)=>{const q=w2s(pt[0],pt[1],w,h); i?ctx.lineTo(q[0],q[1]):ctx.moveTo(q[0],q[1]);}); ctx.closePath();
+    ctx.globalAlpha=aFor(pl.net,0.22); ctx.fillStyle=netCol(pl.net); ctx.fill();
+    ctx.globalAlpha=aFor(pl.net,0.5); ctx.strokeStyle=netCol(pl.net); ctx.lineWidth=1; ctx.stroke(); ctx.globalAlpha=1; });
+  // traces
+  (L.traces||[]).forEach(t=>{ ctx.globalAlpha=aFor(t.net,0.85); ctx.strokeStyle=netCol(t.net);
+    ctx.lineWidth=Math.max(1,(t.w||0.05)*v2.s); ctx.lineCap='round'; ctx.beginPath();
+    t.pts.forEach((pt,i)=>{const q=w2s(pt[0],pt[1],w,h); i?ctx.lineTo(q[0],q[1]):ctx.moveTo(q[0],q[1]);}); ctx.stroke(); ctx.globalAlpha=1; });
+  // pads / via lands
+  (L.pads||[]).forEach(p=>{ if(p.via&&!show.vias) return; const q=w2s(p.x,p.y,w,h), r=Math.max(1.2,p.r*v2.s);
+    ctx.globalAlpha=aFor(p.net,p.via?0.8:0.92); ctx.fillStyle=netCol(p.net); ctx.beginPath();
+    ctx.arc(q[0],q[1],r,0,7); ctx.fill();
+    if(p.via){ ctx.globalAlpha=aFor(p.net,0.9); ctx.fillStyle='#0d1117'; ctx.beginPath(); ctx.arc(q[0],q[1],r*0.45,0,7); ctx.fill(); }
+    ctx.globalAlpha=1; });
+  // components tied to this layer
+  if(s.id==='M4'&&show.balls) drawDots2d(ctx,w,h,PKG.balls,0.34,true);
+  if(s.id==='M1'&&show.bumps) drawDots2d(ctx,w,h,PKG.bumps,0.14,false);
+}
+function drawDots2d(ctx,w,h,arr,rr,ring){ (arr||[]).forEach(b=>{ const q=w2s(b.x,b.y,w,h), r=Math.max(1.5,rr*v2.s);
+  ctx.globalAlpha=aFor(b.net, ring?0.95:0.9); ctx.fillStyle=netCol(b.net); ctx.beginPath(); ctx.arc(q[0],q[1],r,0,7); ctx.fill();
+  if(ring){ ctx.globalAlpha=aFor(b.net,0.9); ctx.strokeStyle='rgba(255,255,255,.5)'; ctx.lineWidth=1; ctx.stroke(); }
+  ctx.globalAlpha=1; }); }
+
+// ================= 3-D =================
+function proj(x,y,z,w,h){ const ca=Math.cos(v3.az),sa=Math.sin(v3.az),ce=Math.cos(v3.el),se=Math.sin(v3.el);
+  const x1=x*ca-y*sa, y1=x*sa+y*ca, z1=z;
+  const y2=y1*ce-z1*se, z2=y1*se+z1*ce;
+  return {x:w/2+x1*v3.s, y:h/2-z2*v3.s, d:y2}; }
+function zpos(level,mid){ return (level-mid)*2.0*v3.explode; }
+function draw3d(){
+  const {ctx,w,h}=setup($('c3d'));
+  ctx.clearRect(0,0,w,h); ctx.fillStyle='#0d1117'; ctx.fillRect(0,0,w,h);
+  const n=PKG.stack.length, mid=(n-1)/2, R=PKG.body/2, prims=[];
+  const levelOf={}; PKG.stack.forEach((s,i)=>levelOf[s.id]=n-1-i); // top layer highest
+  // layer slabs (as filled quads at their z)
+  PKG.stack.forEach((s,i)=>{ if(solo? solo!==s.id : !vis[s.id]) return;
+    const z=zpos(n-1-i,mid), c=[[-R,-R],[R,-R],[R,R],[-R,R]].map(p=>proj(p[0],p[1],z,w,h));
+    const d=(c[0].d+c[2].d)/2;
+    let fill=s.color, al=0.5; if(s.type==='plane'){ fill=netCol(s.net); al=aFor(s.net,0.42); }
+    else if(!show.planes&&(s.type==='plane')) return;
+    prims.push({d,draw:()=>{ ctx.beginPath(); c.forEach((q,k)=>k?ctx.lineTo(q.x,q.y):ctx.moveTo(q.x,q.y)); ctx.closePath();
+      ctx.globalAlpha=al; ctx.fillStyle=fill; ctx.fill(); ctx.globalAlpha=Math.min(1,al+0.3);
+      ctx.strokeStyle=fill; ctx.lineWidth=1; ctx.stroke(); ctx.globalAlpha=1;
+      // layer label at back-left corner
+      ctx.globalAlpha=.9; ctx.fillStyle='#c7d0dd'; ctx.font='10px Segoe UI'; ctx.fillText(s.id, c[3].x+3, c[3].y-2); ctx.globalAlpha=1; }});
+  });
+  // vias
+  if(show.vias) PKG.vias.forEach(vv=>{ const zf=zpos(levelOf[vv.from],mid), zt=zpos(levelOf[vv.to],mid);
+    const a=proj(vv.x,vv.y,zf,w,h), b=proj(vv.x,vv.y,zt,w,h);
+    prims.push({d:(a.d+b.d)/2, draw:()=>{ ctx.globalAlpha=aFor(vv.net,vv.type==='pth'?0.8:0.55);
+      ctx.strokeStyle=netCol(vv.net); ctx.lineWidth=vv.type==='pth'?1.6:0.8; ctx.beginPath();
+      ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke(); ctx.globalAlpha=1; }}); });
+  // C4 bumps (between top metal and die)
+  const zBump=zpos(n+0.4,mid);
+  if(show.bumps) PKG.bumps.forEach(b=>{ const q=proj(b.x,b.y,zBump,w,h);
+    prims.push({d:q.d, draw:()=>{ ctx.globalAlpha=aFor(b.net,0.95); ctx.fillStyle=netCol(b.net);
+      ctx.beginPath(); ctx.arc(q.x,q.y,Math.max(1.3,0.13*v3.s),0,7); ctx.fill(); ctx.globalAlpha=1; }}); });
+  // BGA balls (below bottom)
+  const zBall=zpos(-1.3,mid);
+  if(show.balls) PKG.balls.forEach(b=>{ const q=proj(b.x,b.y,zBall,w,h);
+    prims.push({d:q.d, draw:()=>{ const r=Math.max(2,0.32*v3.s); ctx.globalAlpha=aFor(b.net,0.97);
+      const g=ctx.createRadialGradient(q.x-r*0.3,q.y-r*0.3,r*0.2,q.x,q.y,r);
+      g.addColorStop(0,'#fff'); g.addColorStop(0.25,netCol(b.net)); g.addColorStop(1,netCol(b.net));
+      ctx.fillStyle=g; ctx.beginPath(); ctx.arc(q.x,q.y,r,0,7); ctx.fill(); ctx.globalAlpha=1; }}); });
+  // die
+  if(show.die&&PKG.die){ const d=PKG.die, zD=zpos(n+1.5,mid);
+    const c=[[-d.w/2,-d.h/2],[d.w/2,-d.h/2],[d.w/2,d.h/2],[-d.w/2,d.h/2]].map(p=>proj(p[0],p[1],zD,w,h));
+    prims.push({d:(c[0].d+c[2].d)/2+0.01, draw:()=>{ ctx.beginPath(); c.forEach((q,k)=>k?ctx.lineTo(q.x,q.y):ctx.moveTo(q.x,q.y)); ctx.closePath();
+      ctx.globalAlpha=.9; ctx.fillStyle='#2b3648'; ctx.fill(); ctx.strokeStyle='#8aa0c8'; ctx.lineWidth=1.3; ctx.stroke();
+      ctx.fillStyle='#aeb9cc'; ctx.font='bold 11px Segoe UI'; ctx.textAlign='center'; ctx.fillText('DIE', (c[0].x+c[2].x)/2,(c[0].y+c[2].y)/2+4); ctx.textAlign='left'; ctx.globalAlpha=1; }}); }
+  // painter's sort (far first) + draw
+  prims.sort((a,b)=>b.d-a.d); prims.forEach(p=>p.draw());
+}
+
+// ================= UI =================
+function buildLayerList(){ const el=$('layerList'); el.innerHTML='';
+  PKG.stack.forEach(s=>{ const row=document.createElement('div'); row.className='lyr';
+    row.innerHTML=`<span class="sw" style="background:${s.type==='plane'?netCol(s.net):s.color}"></span>
+      <input type="checkbox" ${vis[s.id]?'checked':''}>
+      <span class="nm" title="${s.name}">${s.name}</span>
+      <span class="solo ${solo===s.id?'on':''}">solo</span>`;
+    row.querySelector('input').onchange=e=>{ vis[s.id]=e.target.checked; if(solo&&!e.target.checked&&solo===s.id)solo=null; redraw(); };
+    row.querySelector('.solo').onclick=()=>{ solo=(solo===s.id?null:s.id); buildLayerList(); updLyrNow(); redraw(); };
+    el.appendChild(row); });
+}
+function buildNetList(){ const el=$('netList'); el.innerHTML='';
+  Object.keys(PKG.NET).forEach(n=>{ const b=document.createElement('div'); b.className='net'+(hlNet===n?' on':'');
+    b.innerHTML=`<span class="d" style="background:${PKG.NET[n]}"></span>${n}`;
+    b.onclick=()=>{ hlNet=(hlNet===n?null:n); buildNetList(); redraw(); }; el.appendChild(b); }); }
+function updInfo(){ $('pkgName').textContent=PKG.name;
+  $('pkgInfo').innerHTML=`<div class="info">Body <b>${PKG.body}×${PKG.body} mm</b></div>
+    <div class="info">Metal layers <b>${PKG.info.metal}</b> · vias <b>${PKG.info.vias}</b></div>
+    <div class="info">BGA balls <b>${PKG.info.balls}</b> · C4 bumps <b>${PKG.info.bumps}</b></div>`; }
+function updLyrNow(){ $('lyrNow').textContent = solo? ('showing only: '+ (PKG.stack.find(s=>s.id===solo)||{}).name)
+   : (Object.values(vis).filter(Boolean).length+' / '+PKG.stack.length+' layers shown'); }
+function redraw(){ draw2d(); draw3d(); updLyrNow(); }
+
+function loadPKG(p){ PKG=p; vis={}; PKG.stack.forEach(s=>vis[s.id]=true); solo=null; hlNet=null;
+  if(!PKG.R)PKG.R=PKG.body/2-0.5;
+  if(!PKG.info){ const nSig=PKG.stack.filter(s=>s.type==='signal'||s.type==='plane').length;
+    PKG.info={metal:nSig,balls:(PKG.balls||[]).length,bumps:(PKG.bumps||[]).length,vias:(PKG.vias||[]).length}; }
+  ['balls','bumps','vias'].forEach(k=>{ if(!PKG[k])PKG[k]=[]; }); if(!PKG.layers)PKG.layers={};
+  updInfo(); buildLayerList(); buildNetList(); fit2d(); redraw(); }
+
+// ---- wiring ----
+$('allOn').onclick=()=>{ PKG.stack.forEach(s=>vis[s.id]=true); solo=null; buildLayerList(); redraw(); };
+$('soloClr').onclick=()=>{ solo=null; buildLayerList(); redraw(); };
+$('fit2d').onclick=()=>{ fit2d(); draw2d(); };
+$('reset3d').onclick=()=>{ v3.az=-0.62; v3.el=0.52; v3.s=fit3scale(); draw3d(); };
+['balls','bumps','vias','die','planes'].forEach(k=>{ $('t'+k[0].toUpperCase()+k.slice(1)).onchange=e=>{ show[k]=e.target.checked; redraw(); }; });
+$('exp').oninput=e=>{ v3.explode=+e.target.value; $('vExp').textContent=v3.explode.toFixed(2)+'×'; draw3d(); };
+$('loadSample').onclick=()=>loadPKG(buildSample());
+$('file').onchange=e=>{ const f=e.target.files[0]; if(!f)return; const rd=new FileReader();
+  rd.onload=()=>{ try{ loadPKG(JSON.parse(rd.result)); }catch(err){ alert('Bad JSON: '+err.message); } }; rd.readAsText(f); };
+
+// 2-D pan/zoom/hover
+(function(){ const cv=$('c2d'); let drag=false,lx=0,ly=0;
+  cv.onmousedown=e=>{drag=true;lx=e.offsetX;ly=e.offsetY;cv.style.cursor='grabbing';};
+  window.addEventListener('mouseup',()=>{drag=false;cv.style.cursor='grab';});
+  cv.onmousemove=e=>{ if(drag){ v2.ox-=(e.offsetX-lx)/v2.s; v2.oy+=(e.offsetY-ly)/v2.s; lx=e.offsetX;ly=e.offsetY; draw2d(); }
+    else hover(e); };
+  cv.onmouseleave=()=>{ $('tip').style.opacity=0; };
+  cv.onwheel=e=>{ e.preventDefault(); const w=cv.clientWidth,h=cv.clientHeight;
+    const wx=v2.ox+(e.offsetX-w/2)/v2.s, wy=v2.oy-(e.offsetY-h/2)/v2.s;
+    v2.s*=Math.exp(-e.deltaY*0.0012); v2.ox=wx-(e.offsetX-w/2)/v2.s; v2.oy=wy+(e.offsetY-h/2)/v2.s; draw2d(); };
+  function hover(e){ const w=cv.clientWidth,h=cv.clientHeight; const wx=v2.ox+(e.offsetX-w/2)/v2.s, wy=v2.oy-(e.offsetY-h/2)/v2.s;
+    let best=null,bd=0.6; const scan=(arr,tag)=>{ (arr||[]).forEach(b=>{ const dx=b.x-wx,dy=b.y-wy,dd=Math.hypot(dx,dy);
+      if(dd<bd){bd=dd;best={net:b.net,tag,x:b.x,y:b.y};} }); };
+    if(show.balls&&(!solo||solo==='M4'))scan(PKG.balls,'ball'); if(show.bumps&&(!solo||solo==='M1'))scan(PKG.bumps,'bump');
+    const tip=$('tip'); if(best){ tip.style.opacity=1; tip.style.left=(e.clientX+12)+'px'; tip.style.top=(e.clientY+12)+'px';
+      tip.textContent=`${best.tag} · net ${best.net} · (${best.x.toFixed(2)}, ${best.y.toFixed(2)}) mm`; } else tip.style.opacity=0; }
+})();
+
+// 3-D orbit/zoom
+function fit3scale(){ const cv=$('c3d'); return Math.min(cv.clientWidth,cv.clientHeight)/(PKG.body*1.5); }
+(function(){ const cv=$('c3d'); let drag=false,lx=0,ly=0;
+  cv.onmousedown=e=>{drag=true;lx=e.clientX;ly=e.clientY;cv.style.cursor='grabbing';$('spin').checked=false;spinning=false;};
+  window.addEventListener('mouseup',()=>{drag=false;cv.style.cursor='grab';});
+  window.addEventListener('mousemove',e=>{ if(!drag)return; v3.az+=(e.clientX-lx)*0.01; v3.el=Math.max(0.05,Math.min(1.4,v3.el+(e.clientY-ly)*0.01)); lx=e.clientX;ly=e.clientY; draw3d(); });
+  cv.onwheel=e=>{ e.preventDefault(); v3.s*=Math.exp(-e.deltaY*0.0012); draw3d(); };
+})();
+let spinning=false;
+$('spin').onchange=e=>{ spinning=e.target.checked; if(spinning)spin(); };
+function spin(){ if(!spinning)return; v3.az+=0.006; draw3d(); requestAnimationFrame(spin); }
+
+window.addEventListener('resize',()=>{ redraw(); });
+// init
+loadPKG(buildSample()); v3.s=fit3scale(); draw3d();
+$('vExp').textContent=v3.explode.toFixed(2)+'×';
+// self-test hook
+window.__ok=()=>({balls:PKG.balls.length,bumps:PKG.bumps.length,vias:PKG.vias.length,layers:PKG.stack.length});
+</script>
+</body></html>
