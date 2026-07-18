@@ -63,9 +63,10 @@
 <div class="banner" style="display:flex;justify-content:space-between;align-items:flex-start;gap:14px">
   <div>
     <h1>📦 MCM / Package Browser <span style="font-size:13px;font-weight:400;opacity:.85">— 2-D layers &amp; 3-D stack</span></h1>
-    <p>Browse a flip-chip <b>BGA-on-substrate</b> package: step through etch layers in 2-D, or orbit the exploded
-    3-D stack. Ships with a sample FCBGA; <b>Load JSON</b> to view a real design exported from a Cadence
-    <code>.mcm</code> (via <i>extracta</i> / IPC-2581 / ODB++ → this JSON schema).</p>
+    <p>Step through etch layers in 2-D, or orbit the exploded 3-D stack. Loads a <b>live IPC-2581 sample</b>
+    by default; load your own <b>IPC-2581</b> <code>.xml</code> (exported from a Cadence <code>.mcm</code>) or the
+    package-JSON, or try the synthetic <b>FCBGA demo</b>. Binary <code>.mcm</code> can't be parsed directly — a
+    coworker exports IPC-2581 (message below).</p>
   </div>
   <button class="dlbtn" id="dl" title="Download this self-contained page (with the current design &amp; view) to run offline">⬇ Save to run locally</button>
 </div>
@@ -103,14 +104,15 @@
       <label><input type="checkbox" id="tPlanes" checked> planes</label>
     </div>
 
-    <div class="sec">Load .mcm / design</div>
+    <div class="sec">Load design</div>
     <input type="text" class="txt" id="mcmPath" placeholder="/proj/lib/design.mcm">
     <div style="margin-top:6px">
-      <button class="act" id="loadBtn">📂 Load .mcm / JSON…</button>
-      <button class="act" id="loadSample">Sample</button>
+      <button class="act" id="loadBtn">📂 Load IPC-2581 / JSON…</button>
+      <button class="act" id="loadOnline">🌐 IPC-2581 sample</button>
+      <button class="act" id="loadSample">FCBGA demo</button>
     </div>
-    <input type="file" id="file" accept=".json,.mcm,application/json" style="display:none">
-    <p class="hint">Binary <code>.mcm</code> can't be parsed in-browser — export to package-JSON first (see notes). The path field is saved into the share URL.</p>
+    <input type="file" id="file" accept=".xml,.cvg,.json,.mcm,application/xml,application/json" style="display:none">
+    <p class="hint">Load an <b>IPC-2581</b> <code>.xml</code> (what a coworker exports from a <code>.mcm</code>) or the package-JSON. Binary <code>.mcm</code> can't be parsed in-browser (see below). Path is saved into the share URL.</p>
   </div>
 
   <!-- ============ 2D (full width beside controls) ============ -->
@@ -133,6 +135,26 @@
        <input type="range" class="rng" id="exp" min="0.35" max="2.6" step="0.02" value="1.1"></label>
    </div>
    <p class="hint">Z is schematic (layers evenly spaced) — real dielectric/metal thicknesses aren't to scale.</p>
+ </div>
+
+ <div class="card" style="margin-top:16px">
+   <div class="viewhead"><h3 style="margin:0">✉ Ask a coworker to export IPC-2581</h3>
+     <span class="ok" id="msgOk">copied ✓</span>
+     <button class="act" id="copyMsg" style="margin-left:auto">Copy message</button></div>
+   <p class="hint" style="margin:0 0 8px">Reading a <code>.mcm</code> needs a licensed Allegro / APD seat. Send this to someone who has one — they email you back a <code>.xml</code> you load above (📂).</p>
+   <pre id="coMsg" style="white-space:pre-wrap;margin:0">Subject: Export this .mcm to IPC-2581 for me
+
+Hi — you have the licensed Allegro / Advanced Package Designer (APD) seat and I don't.
+Could you open the attached .mcm and export it to IPC-2581 (an open format I can read)?
+
+  1. Allegro X APD (or Allegro PCB Editor) → File → Open → the .mcm.
+  2. File → Export → IPC2581…
+  3. Units = the design's units (usually MM); IPC-2581 Revision = C (or B).
+     Leave BOM / netlist / component data included (defaults are fine).
+  4. Set an output name/location → Export. It writes a .xml (or .cvg).
+  5. Send me that .xml/.cvg (zipped is fine).
+
+Thanks!</pre>
  </div>
 
  <details style="margin-top:16px" class="card">
@@ -237,13 +259,75 @@ function buildSample(){
     info:{metal:nSig, balls:balls.length, bumps:bumps.length, vias:vias.length}};
 }
 
+// ---------------- IPC-2581 (open XML) parser → package-JSON ----------------
+const SAMPLE_URL='https://raw.githubusercontent.com/mgburr/ipc2581-to-kicad/master/samples/led_power_board.xml';
+function parseIPC2581(txt){
+  const doc=new DOMParser().parseFromString(txt,'application/xml');
+  if(doc.getElementsByTagName('parsererror').length) throw new Error('not valid XML');
+  const els=(r,n)=>[...r.getElementsByTagNameNS('*',n)], num=(e,a)=>parseFloat(e.getAttribute(a));
+  const ch=els(doc,'CadHeader')[0], u=((ch&&ch.getAttribute('units'))||'MM').toUpperCase();
+  const K=(u.indexOf('IN')===0||u==='INCH')?25.4:1;                    // → mm
+  const type=fn=>/SOLDERMASK|MASK/.test(fn)?'mask':/DIELECTRIC|CORE/.test(fn)?'core':/PLANE|POWER|GROUND/.test(fn)?'plane':/SIGNAL|CONDUCTOR/.test(fn)?'signal':'doc';
+  const colorFor=(fn,side)=>{const t=type(fn);return t==='mask'?'#12694a':t==='core'?'#0c3b2c':t==='plane'?'#c46a24':t==='signal'?(side==='BOTTOM'?'#b06a2e':'#e8a13a'):'#5b6b7a';};
+  const layerDefs={}; els(doc,'Layer').forEach(L=>layerDefs[L.getAttribute('name')]={fn:(L.getAttribute('layerFunction')||'').toUpperCase(),side:(L.getAttribute('side')||'').toUpperCase()});
+  const stackOrder=els(doc,'StackupLayer').map(s=>s.getAttribute('layerOrGroupRef'));
+  const ps={}; els(doc,'EntryStandard').forEach(e=>{ const id=e.getAttribute('id'); let r=0.25;
+    const c=els(e,'Circle')[0],rc=els(e,'RectCenter')[0],ov=els(e,'Oval')[0];
+    if(c)r=num(c,'diameter')/2; else if(rc)r=Math.max(num(rc,'width'),num(rc,'height'))/2; else if(ov)r=Math.max(num(ov,'width'),num(ov,'height'))/2;
+    const d=els(e,'Drill')[0]; ps[id]={r:r*K, via:/^VIA|^N?PTH/i.test(id), drill:d?num(d,'diameter')*K:0}; });
+  const netOf={}; els(doc,'LogicalNet').forEach(n=>{ const nn=n.getAttribute('name');
+    els(n,'PinRef').forEach(pr=>netOf[pr.getAttribute('componentRef')+'~'+pr.getAttribute('pin')]=nn); });
+  const pkgs={}; els(doc,'Package').forEach(P=>pkgs[P.getAttribute('name')]=els(P,'Pin').map(p=>({num:p.getAttribute('number'),x:num(p,'x')*K,y:num(p,'y')*K,ref:p.getAttribute('padstackDefRef')})));
+  const polyPts=pg=>{ const out=[], pb=els(pg,'PolyBegin')[0]; if(pb)out.push([num(pb,'x')*K,num(pb,'y')*K]);
+    [...pg.children].forEach(c=>{ if(c.localName==='PolyStepSegment'||c.localName==='PolyStepCurve')out.push([num(c,'x')*K,num(c,'y')*K]); }); return out; };
+  let outline=[]; const prof=els(doc,'Profile')[0]; if(prof){ const pg=els(prof,'Polygon')[0]; if(pg)outline=polyPts(pg); }
+  const layers={}, ensure=id=>layers[id]||(layers[id]={planes:[],traces:[],pads:[]}), vias=[];
+  els(doc,'LayerFeature').forEach(lf=>{ const L=ensure(lf.getAttribute('layerRef'));
+    els(lf,'Set').forEach(set=>{ const net=set.getAttribute('net')||null;
+      els(set,'Line').forEach(ln=>L.traces.push({pts:[[num(ln,'startX')*K,num(ln,'startY')*K],[num(ln,'endX')*K,num(ln,'endY')*K]],w:(num(ln,'lineWidth')||0.1)*K,net}));
+      els(set,'Polygon').forEach(pg=>{ const poly=polyPts(pg); if(poly.length>2)L.planes.push({poly,net}); });
+      els(set,'Pad').forEach(pd=>{ const P=ps[pd.getAttribute('padstackDefRef')]||{r:0.2}, x=num(pd,'x')*K, y=num(pd,'y')*K;
+        L.pads.push({x,y,r:P.r,net,via:P.via?1:0}); if(P.via)vias.push({x,y,net,type:'via'}); }); }); });
+  els(doc,'Component').forEach(C=>{ const ref=C.getAttribute('refDes'), pk=C.getAttribute('packageRef'), xf=els(C,'Xform')[0];
+    if(!xf||!pkgs[pk])return; const L=ensure(C.getAttribute('layerRef')), cx=num(xf,'x')*K, cy=num(xf,'y')*K,
+      rot=(num(xf,'rotation')||0)*Math.PI/180, mir=xf.getAttribute('mirror')==='true';
+    pkgs[pk].forEach(pin=>{ const px=mir?-pin.x:pin.x, py=pin.y, P=ps[pin.ref]||{r:0.3};
+      L.pads.push({x:cx+px*Math.cos(rot)-py*Math.sin(rot), y:cy+px*Math.sin(rot)+py*Math.cos(rot), r:P.r, net:netOf[ref+'~'+pin.num]||null}); }); });
+  // bbox → center at origin
+  let x0=1e9,y0=1e9,x1=-1e9,y1=-1e9; const acc=(x,y)=>{if(x<x0)x0=x;if(y<y0)y0=y;if(x>x1)x1=x;if(y>y1)y1=y;};
+  outline.forEach(p=>acc(p[0],p[1]));
+  Object.values(layers).forEach(L=>{L.pads.forEach(p=>acc(p.x,p.y));L.traces.forEach(t=>t.pts.forEach(q=>acc(q[0],q[1])));L.planes.forEach(pl=>pl.poly.forEach(q=>acc(q[0],q[1])));});
+  if(x0>x1){x0=y0=0;x1=y1=10;}
+  const mx=(x0+x1)/2, my=(y0+y1)/2, sh=p=>[p[0]-mx,p[1]-my];
+  outline=outline.map(sh);
+  Object.values(layers).forEach(L=>{L.pads.forEach(p=>{p.x-=mx;p.y-=my;});L.traces.forEach(t=>t.pts=t.pts.map(sh));L.planes.forEach(pl=>pl.poly=pl.poly.map(sh));});
+  vias.forEach(v=>{v.x-=mx;v.y-=my;});
+  // stack: stackup order, then any feature-bearing layers
+  const stack=[], used=new Set(), push=nm=>{ if(!nm||used.has(nm)||!layerDefs[nm])return; used.add(nm);
+    const d=layerDefs[nm]; stack.push({id:nm,name:nm,type:type(d.fn),color:colorFor(d.fn,d.side)}); };
+  stackOrder.forEach(push); Object.keys(layers).forEach(push);
+  const cu=stack.filter(s=>s.type==='signal'||s.type==='plane').map(s=>s.id);
+  vias.forEach(v=>{v.from=cu[0]||stack[0].id; v.to=cu[cu.length-1]||stack[stack.length-1].id;});
+  const step=els(doc,'Step')[0], nm=(step&&step.getAttribute('name'))||'IPC-2581';
+  return { name:nm+'  ·  IPC-2581', body:Math.max(x1-x0,y1-y0,4), bbox:{w:x1-x0,h:y1-y0}, outline,
+    NET:{GND:'#2f9e44',VDD:'#e03131',VDDIO:'#f08c00',SIG:'#4dabf7'}, stack, die:null, bumps:[], balls:[], vias, layers,
+    info:{metal:cu.length, vias:vias.length, balls:0, bumps:0} };
+}
+async function loadOnlineSample(){ try{ const r=await fetch(SAMPLE_URL,{cache:'force-cache'}); if(!r.ok)throw 0;
+    const pk=parseIPC2581(await r.text()); isCustom=true; lastJSON=JSON.stringify(pk); loadPKG(pk); return true;
+  }catch(e){ return false; } }
+
 // ---------------- state ----------------
 let PKG, vis={}, solo=null, selNets=new Set(), isCustom=false, lastJSON=null;
 const show={balls:true,bumps:true,vias:true,die:true,planes:true};
 const v2={s:1, ox:0, oy:0};
 const v3={az:-0.62, el:0.52, s:1, explode:1.1, cx:0, cy:0};
-function classOf(n){ return (n==='GND'||n==='VDD'||n==='VDDIO')?n:'SIG'; }
-function netCol(n){ return (PKG.NET&&PKG.NET[classOf(n)])||'#adb5bd'; }
+function classOf(n){ n=(''+n).toUpperCase();
+  if(n==='VDDIO'||/VDDIO|VIO\b/.test(n)) return 'VDDIO';
+  if(/GND|VSS|GROUND/.test(n)) return 'GND';
+  if(/^V|VCC|VDD|VBAT|PWR|POWER|VIN|VOUT|3V3|5V|1V8/.test(n)) return 'VDD';
+  return 'SIG'; }
+function netCol(n){ if(n==null||n==='') return '#8993a4'; return (PKG.NET&&PKG.NET[classOf(n)])||'#adb5bd'; }
 // no selection → show everything; else show only selected nets, HIDE the rest (alpha 0)
 function aFor(net,base){ return selNets.size===0 ? base : (selNets.has(net)?base:0); }
 function computeNets(pkg){ const m=new Map(), add=n=>{ if(n!=null)m.set(n,(m.get(n)||0)+1); };
@@ -278,9 +362,11 @@ function w2s(x,y,w,h){ return [w/2+(x-v2.ox)*v2.s, h/2-(y-v2.oy)*v2.s]; }
 function draw2d(){
   const {ctx,w,h}=setup($('c2d'));
   ctx.clearRect(0,0,w,h); ctx.fillStyle='#0d1117'; ctx.fillRect(0,0,w,h);
-  // board outline
-  const R=PKG.body/2; const p0=w2s(-R,-R,w,h), p1=w2s(R,R,w,h);
-  ctx.strokeStyle='#3d4756'; ctx.lineWidth=1; ctx.strokeRect(p0[0],p1[1],p1[0]-p0[0],p0[1]-p1[1]);
+  // board outline (real profile polygon if available, else square body)
+  const R=PKG.body/2; ctx.strokeStyle='#3d4756'; ctx.lineWidth=1;
+  if(PKG.outline&&PKG.outline.length>2){ ctx.beginPath();
+    PKG.outline.forEach((pt,i)=>{const q=w2s(pt[0],pt[1],w,h); i?ctx.lineTo(q[0],q[1]):ctx.moveTo(q[0],q[1]);}); ctx.closePath(); ctx.stroke(); }
+  else { const p0=w2s(-R,-R,w,h), p1=w2s(R,R,w,h); ctx.strokeRect(p0[0],p1[1],p1[0]-p0[0],p0[1]-p1[1]); }
   // draw layers bottom -> top
   for(let k=PKG.stack.length-1;k>=0;k--){ const s=PKG.stack[k];
     if(solo? solo!==s.id : !vis[s.id]) continue;
@@ -331,10 +417,11 @@ function draw3d(){
   const {ctx,w,h}=setup($('c3d'));
   ctx.clearRect(0,0,w,h); ctx.fillStyle='#0d1117'; ctx.fillRect(0,0,w,h);
   const n=PKG.stack.length, mid=(n-1)/2, R=PKG.body/2, prims=[];
+  const OUT=(PKG.outline&&PKG.outline.length>2)?PKG.outline:[[-R,-R],[R,-R],[R,R],[-R,R]];
   const levelOf={}; PKG.stack.forEach((s,i)=>levelOf[s.id]=n-1-i); // top layer highest
   // layer slabs (as filled quads at their z)
   PKG.stack.forEach((s,i)=>{ if(solo? solo!==s.id : !vis[s.id]) return;
-    const z=zpos(n-1-i,mid), c=[[-R,-R],[R,-R],[R,R],[-R,R]].map(p=>proj(p[0],p[1],z,w,h));
+    const z=zpos(n-1-i,mid), c=OUT.map(p=>proj(p[0],p[1],z,w,h));
     const d=(c[0].d+c[2].d)/2;
     let fill=s.color, al=0.5; if(s.type==='plane'){ fill=netCol(s.net); al=aFor(s.net,0.42); }
     else if(!show.planes&&(s.type==='plane')) return;
@@ -398,9 +485,10 @@ function updNetCount(shownN){ const total=(PKG._nets||[]).length;
   $('netCount').textContent = `${selNets.size} selected / ${total} nets`
     + (selNets.size?' · isolating (rest hidden)':'') + (shownN!=null?` · ${shownN} shown`:''); }
 function updInfo(){ $('pkgName').textContent=PKG.name;
-  $('pkgInfo').innerHTML=`<div class="info">Body <b>${PKG.body}×${PKG.body} mm</b></div>
-    <div class="info">Metal layers <b>${PKG.info.metal}</b> · vias <b>${PKG.info.vias}</b></div>
-    <div class="info">BGA balls <b>${PKG.info.balls}</b> · C4 bumps <b>${PKG.info.bumps}</b></div>`; }
+  const bw=PKG.bbox?PKG.bbox.w:PKG.body, bh=PKG.bbox?PKG.bbox.h:PKG.body;
+  const bb=(PKG.balls.length||PKG.bumps.length)?`<div class="info">BGA balls <b>${PKG.info.balls}</b> · C4 bumps <b>${PKG.info.bumps}</b></div>`:'';
+  $('pkgInfo').innerHTML=`<div class="info">Body <b>${bw.toFixed(1)}×${bh.toFixed(1)} mm</b></div>
+    <div class="info">Etch layers <b>${PKG.info.metal}</b> · vias <b>${PKG.info.vias}</b></div>`+bb; }
 function updLyrNow(){ $('lyrNow').textContent = solo? ('showing only: '+ (PKG.stack.find(s=>s.id===solo)||{}).name)
    : (Object.values(vis).filter(Boolean).length+' / '+PKG.stack.length+' layers shown'); }
 function redraw(){ draw2d(); draw3d(); updLyrNow(); }
@@ -425,14 +513,17 @@ $('fit2d').onclick=()=>{ fit2d(); draw2d(); };
 $('reset3d').onclick=()=>{ v3.az=-0.62; v3.el=0.52; v3.cx=0; v3.cy=0; v3.s=fit3scale(); draw3d(); };
 ['balls','bumps','vias','die','planes'].forEach(k=>{ $('t'+k[0].toUpperCase()+k.slice(1)).onchange=e=>{ show[k]=e.target.checked; redraw(); }; });
 $('exp').oninput=e=>{ v3.explode=+e.target.value; $('vExp').textContent=v3.explode.toFixed(2)+'×'; draw3d(); };
-$('loadSample').onclick=()=>{ isCustom=false; lastJSON=null; $('mcmPath').value=''; loadPKG(buildSample()); };
+$('loadSample').onclick=()=>{ isCustom=false; lastJSON=null; $('mcmPath').value=''; loadPKG(buildSample()); v3.cx=0;v3.cy=0;v3.s=fit3scale(); draw3d(); };
+$('loadOnline').onclick=async()=>{ if(!await loadOnlineSample()) alert('Could not fetch the online IPC-2581 sample (offline, or blocked).'); else { v3.cx=0;v3.cy=0;v3.s=fit3scale(); draw3d(); } };
 $('loadBtn').onclick=()=>$('file').click();
 $('file').onchange=e=>{ const f=e.target.files[0]; if(!f)return;
-  if(!$('mcmPath').value.trim()) $('mcmPath').value=f.name;
-  if(/\.json$/i.test(f.name)){ const rd=new FileReader();
-    rd.onload=()=>{ try{ const pk=JSON.parse(rd.result); loadPKG(pk); isCustom=true; lastJSON=rd.result; }
+  if(!$('mcmPath').value.trim()) $('mcmPath').value=f.name; const rd=new FileReader();
+  const done=()=>{ v3.cx=0;v3.cy=0;v3.s=fit3scale(); draw3d(); };
+  if(/\.(xml|cvg)$/i.test(f.name)){ rd.onload=()=>{ try{ const pk=parseIPC2581(rd.result); loadPKG(pk); isCustom=true; lastJSON=JSON.stringify(pk); done(); }
+      catch(err){ alert('IPC-2581 parse failed: '+err.message); } }; rd.readAsText(f); }
+  else if(/\.json$/i.test(f.name)){ rd.onload=()=>{ try{ const pk=JSON.parse(rd.result); loadPKG(pk); isCustom=true; lastJSON=rd.result; done(); }
       catch(err){ alert('Bad JSON: '+err.message); } }; rd.readAsText(f); }
-  else { alert('“'+f.name+'” looks like a binary/.mcm file — it can\'t be parsed in a browser.\n\nExport it to package-JSON (Allegro extracta / IPC-2581 / ODB++ → the schema in the notes) and load that.'); }
+  else { alert('“'+f.name+'” looks like a binary/.mcm file — it can\'t be parsed in a browser.\n\nExport it to IPC-2581 (.xml) — one File ▸ Export click in Allegro — or package-JSON (see EXPORT.md), and load that.'); }
 };
 
 // ---------------- shareable URL state ----------------
@@ -478,6 +569,8 @@ $('dl').onclick=async()=>{
   const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([html],{type:'text/html'}));
   a.download='mcm-browser.html'; document.body.appendChild(a); a.click(); a.remove();
   setTimeout(()=>URL.revokeObjectURL(a.href),1500); };
+$('copyMsg').onclick=()=>{ const t=$('coMsg').textContent, ok=()=>{ const o=$('msgOk'); o.classList.add('show'); setTimeout(()=>o.classList.remove('show'),1600); };
+  if(navigator.clipboard&&navigator.clipboard.writeText) navigator.clipboard.writeText(t).then(ok,()=>{}); else { const r=document.createRange(); r.selectNodeContents($('coMsg')); getSelection().removeAllRanges(); getSelection().addRange(r); ok(); } };
 
 // 2-D pan/zoom/hover
 (function(){ const cv=$('c2d'); let drag=false,lx=0,ly=0;
@@ -510,14 +603,15 @@ $('spin').onchange=e=>{ spinning=e.target.checked; if(spinning)spin(); };
 function spin(){ if(!spinning)return; v3.az+=0.006; draw3d(); requestAnimationFrame(spin); }
 
 window.addEventListener('resize',()=>{ redraw(); });
-// init — restore from URL hash if present, else sample
-(function init(){
+// init — restore from URL hash if present; else default to the live IPC-2581 sample (FCBGA offline fallback)
+(async function init(){
   const p=new URLSearchParams(location.hash.slice(1));
   if(p.has('data')){ try{ const txt=b64d(p.get('data')); loadPKG(JSON.parse(txt)); isCustom=true; lastJSON=txt; }
-    catch(e){ loadPKG(buildSample()); } }
-  else loadPKG(buildSample());
-  v3.s=fit3scale();
-  applyState(p);            // overrides view/toggles when keys present
+      catch(e){ loadPKG(buildSample()); }
+    v3.s=fit3scale(); applyState(p); }
+  else { loadPKG(buildSample()); v3.s=fit3scale(); redraw();     // instant, works offline
+    const ok=await loadOnlineSample();                            // upgrade default to real IPC-2581 board
+    if(ok){ v3.cx=0; v3.cy=0; v3.s=fit3scale(); redraw(); } }
   $('vExp').textContent=v3.explode.toFixed(2)+'×';
 })();
 // self-test hook
