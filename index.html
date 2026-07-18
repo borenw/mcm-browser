@@ -237,11 +237,11 @@ function buildSample(){
     const net = ring<2 ? nm(bb++) : power(i,j); bumps.push({x,y,net}); }
   // vias
   const vias=[];
-  balls.forEach(b=>vias.push({x:b.x,y:b.y,from:'M4',to:'M3',net:b.net,type:'uvia'}));
-  bumps.forEach(b=>vias.push({x:b.x,y:b.y,from:'M1',to:'M2',net:b.net,type:'uvia'}));
+  balls.forEach(b=>vias.push({x:b.x,y:b.y,from:'M4',to:'M3',net:b.net,type:'uvia',r:0.10,drill:0.06}));
+  bumps.forEach(b=>vias.push({x:b.x,y:b.y,from:'M1',to:'M2',net:b.net,type:'uvia',r:0.10,drill:0.06}));
   const gn=9, gp=1.7, goff=(gn-1)/2*gp;
   for(let i=0;i<gn;i++)for(let j=0;j<gn;j++){ const x=i*gp-goff, y=j*gp-goff;
-    vias.push({x,y,from:'M2',to:'M3',net:((i+j)%2?'VDD':'GND'),type:'pth'}); }
+    vias.push({x,y,from:'M2',to:'M3',net:((i+j)%2?'VDD':'GND'),type:'pth',r:0.16,drill:0.20}); }
   // per-layer features
   const L={}; stack.forEach(s=>L[s.id]={planes:[],traces:[],pads:[]});
   const out=[[-R,-R],[R,-R],[R,R],[-R,R]];
@@ -287,7 +287,7 @@ function parseIPC2581(txt){
       els(set,'Line').forEach(ln=>L.traces.push({pts:[[num(ln,'startX')*K,num(ln,'startY')*K],[num(ln,'endX')*K,num(ln,'endY')*K]],w:(num(ln,'lineWidth')||0.1)*K,net}));
       els(set,'Polygon').forEach(pg=>{ const poly=polyPts(pg); if(poly.length>2)L.planes.push({poly,net}); });
       els(set,'Pad').forEach(pd=>{ const P=ps[pd.getAttribute('padstackDefRef')]||{r:0.2}, x=num(pd,'x')*K, y=num(pd,'y')*K;
-        L.pads.push({x,y,r:P.r,net,via:P.via?1:0}); if(P.via)vias.push({x,y,net,type:'via'}); }); }); });
+        L.pads.push({x,y,r:P.r,net,via:P.via?1:0}); if(P.via)vias.push({x,y,net,type:'via',r:P.r,drill:P.drill||P.r*1.1}); }); }); });
   els(doc,'Component').forEach(C=>{ const ref=C.getAttribute('refDes'), pk=C.getAttribute('packageRef'), xf=els(C,'Xform')[0];
     if(!xf||!pkgs[pk])return; const L=ensure(C.getAttribute('layerRef')), cx=num(xf,'x')*K, cy=num(xf,'y')*K,
       rot=(num(xf,'rotation')||0)*Math.PI/180, mir=xf.getAttribute('mirror')==='true';
@@ -413,6 +413,12 @@ function proj(x,y,z,w,h){ x-=v3.cx; y-=v3.cy; const ca=Math.cos(v3.az),sa=Math.s
   const y2=y1*ce-z1*se, z2=y1*se+z1*ce;
   return {x:w/2+x1*v3.s, y:h/2-z2*v3.s, d:y2}; }
 function zpos(level,mid){ return (level-mid)*2.0*v3.explode; }
+// in-plane basis: how a unit step in board x / y maps to screen (constant for orthographic) → lets us
+// draw a flat DISK on the tilted layer as a foreshortened ellipse instead of a camera-facing circle
+function planeBasis(){ const s=v3.s, ca=Math.cos(v3.az), sa=Math.sin(v3.az), se=Math.sin(v3.el);
+  return [ca*s, -sa*se*s, -sa*s, -ca*se*s]; }   // [ux.x, ux.y, uy.x, uy.y]
+function fillDisk(ctx,q,r){ const b=planeBasis(); ctx.save();
+  ctx.transform(b[0],b[1],b[2],b[3],q.x,q.y); ctx.beginPath(); ctx.arc(0,0,r,0,7); ctx.fill(); ctx.restore(); }
 function draw3d(){
   const {ctx,w,h}=setup($('c3d'));
   ctx.clearRect(0,0,w,h); ctx.fillStyle='#0d1117'; ctx.fillRect(0,0,w,h);
@@ -440,20 +446,23 @@ function draw3d(){
       const p0=proj(t.pts[0][0],t.pts[0][1],z,w,h), p1=proj(t.pts[1][0],t.pts[1][1],z,w,h);
       prims.push({d:(p0.d+p1.d)/2,draw:()=>{ ctx.globalAlpha=a; ctx.strokeStyle=netCol(t.net); ctx.lineWidth=Math.max(1,(t.w||0.1)*v3.s); ctx.lineCap='round';
         ctx.beginPath(); ctx.moveTo(p0.x,p0.y); ctx.lineTo(p1.x,p1.y); ctx.stroke(); ctx.globalAlpha=1; }}); });
-    // pads / via-lands
+    // pads / via-lands — flat DISKS lying on the layer plane (foreshortened ellipse)
     if(drawPads)(L.pads||[]).forEach(p=>{ if(p.via&&!show.vias)return; const a=aFor(p.net,0.95); if(a<=0)return;
       const q=proj(p.x,p.y,z,w,h);
-      prims.push({d:q.d,draw:()=>{ ctx.globalAlpha=a; ctx.fillStyle=netCol(p.net); ctx.beginPath(); ctx.arc(q.x,q.y,Math.max(1,(p.r||0.2)*v3.s),0,7); ctx.fill();
-        if(p.via){ ctx.globalAlpha=a; ctx.fillStyle='#0d1117'; ctx.beginPath(); ctx.arc(q.x,q.y,Math.max(0.5,(p.r||0.2)*v3.s*0.45),0,7); ctx.fill(); } ctx.globalAlpha=1; }}); });
+      prims.push({d:q.d,draw:()=>{ ctx.globalAlpha=a; ctx.fillStyle=netCol(p.net); fillDisk(ctx,q,(p.r||0.2));
+        if(p.via){ ctx.fillStyle='#0d1117'; fillDisk(ctx,q,(p.r||0.2)*0.5); } ctx.globalAlpha=1; }}); });
   });
-  // vias — vertical connectors between layers, with end dots
+  // vias — vertical barrels (drill-diameter wide) with flat annular ring caps top & bottom
   if(show.vias) PKG.vias.forEach(vv=>{ if(levelOf[vv.from]==null||levelOf[vv.to]==null)return;
     const a=aFor(vv.net,1); if(a<=0)return;
     const A=proj(vv.x,vv.y,zpos(levelOf[vv.from],mid),w,h), B=proj(vv.x,vv.y,zpos(levelOf[vv.to],mid),w,h);
-    prims.push({d:Math.min(A.d,B.d)-0.01,draw:()=>{ ctx.globalAlpha=Math.min(1,a*(vv.type==='pth'?0.95:0.85));
-      ctx.strokeStyle=netCol(vv.net); ctx.lineWidth=vv.type==='pth'?2:1.4; ctx.lineCap='round';
+    const rr=vv.r||0.2, dr=vv.drill||rr*1.1;
+    prims.push({d:Math.min(A.d,B.d)-0.01,draw:()=>{ const col=netCol(vv.net);
+      ctx.globalAlpha=Math.min(1,a*0.92); ctx.strokeStyle=col; ctx.lineWidth=Math.max(1.5,dr*v3.s); ctx.lineCap='round';
       ctx.beginPath(); ctx.moveTo(A.x,A.y); ctx.lineTo(B.x,B.y); ctx.stroke();
-      ctx.fillStyle=netCol(vv.net); [A,B].forEach(P=>{ctx.beginPath();ctx.arc(P.x,P.y,2,0,7);ctx.fill();}); ctx.globalAlpha=1; }}); });
+      ctx.fillStyle=col; [A,B].forEach(P=>fillDisk(ctx,P,rr));            // annular ring (pad)
+      ctx.fillStyle='#0d1117'; [A,B].forEach(P=>fillDisk(ctx,P,dr/2));   // drill hole
+      ctx.globalAlpha=1; }}); });
   // C4 bumps (between top metal and die)
   const zBump=zpos(n+0.4,mid);
   if(show.bumps) PKG.bumps.forEach(b=>{ const q=proj(b.x,b.y,zBump,w,h);
