@@ -419,24 +419,41 @@ function draw3d(){
   const n=PKG.stack.length, mid=(n-1)/2, R=PKG.body/2, prims=[];
   const OUT=(PKG.outline&&PKG.outline.length>2)?PKG.outline:[[-R,-R],[R,-R],[R,R],[-R,R]];
   const levelOf={}; PKG.stack.forEach((s,i)=>levelOf[s.id]=n-1-i); // top layer highest
-  // layer slabs (as filled quads at their z)
+  // layer slabs (translucent) + the layer's net features (planes / traces / pads) drawn on the slab
+  const drawPads=(PKG.balls.length+PKG.bumps.length)===0;   // PCB/IPC boards → show pads; FCBGA uses balls/bumps
   PKG.stack.forEach((s,i)=>{ if(solo? solo!==s.id : !vis[s.id]) return;
-    const z=zpos(n-1-i,mid), c=OUT.map(p=>proj(p[0],p[1],z,w,h));
-    const d=(c[0].d+c[2].d)/2;
-    let fill=s.color, al=0.5; if(s.type==='plane'){ fill=netCol(s.net); al=aFor(s.net,0.42); }
-    else if(!show.planes&&(s.type==='plane')) return;
-    prims.push({d,draw:()=>{ ctx.beginPath(); c.forEach((q,k)=>k?ctx.lineTo(q.x,q.y):ctx.moveTo(q.x,q.y)); ctx.closePath();
-      ctx.globalAlpha=al; ctx.fillStyle=fill; ctx.fill(); ctx.globalAlpha=Math.min(1,al+0.3);
+    const z=zpos(n-1-i,mid), c=OUT.map(p=>proj(p[0],p[1],z,w,h)), cd=(c[0].d+c[2].d)/2;
+    const L=PKG.layers[s.id]||{planes:[],traces:[],pads:[]};
+    let fill=s.color, al=0.26; if(s.type==='plane'){ fill=netCol(s.net); al=aFor(s.net,0.26); }
+    // slab
+    prims.push({d:cd+0.02,draw:()=>{ ctx.beginPath(); c.forEach((q,k)=>k?ctx.lineTo(q.x,q.y):ctx.moveTo(q.x,q.y)); ctx.closePath();
+      ctx.globalAlpha=al; ctx.fillStyle=fill; ctx.fill(); ctx.globalAlpha=Math.min(1,al+0.35);
       ctx.strokeStyle=fill; ctx.lineWidth=1; ctx.stroke(); ctx.globalAlpha=1;
-      // layer label at back-left corner
-      ctx.globalAlpha=.9; ctx.fillStyle='#c7d0dd'; ctx.font='10px Segoe UI'; ctx.fillText(s.id, c[3].x+3, c[3].y-2); ctx.globalAlpha=1; }});
+      ctx.globalAlpha=.85; ctx.fillStyle='#c7d0dd'; ctx.font='10px Segoe UI'; ctx.fillText(s.id, c[3].x+3, c[3].y-2); ctx.globalAlpha=1; }});
+    // planes on this layer
+    if(show.planes)(L.planes||[]).forEach(pl=>{ const a=aFor(pl.net,0.5); if(a<=0)return;
+      const pts=pl.poly.map(p=>proj(p[0],p[1],z,w,h)), pd=pts.reduce((t,q)=>t+q.d,0)/pts.length;
+      prims.push({d:pd,draw:()=>{ ctx.beginPath(); pts.forEach((q,k)=>k?ctx.lineTo(q.x,q.y):ctx.moveTo(q.x,q.y)); ctx.closePath();
+        ctx.globalAlpha=a*0.55; ctx.fillStyle=netCol(pl.net); ctx.fill(); ctx.globalAlpha=1; }}); });
+    // traces
+    (L.traces||[]).forEach(t=>{ const a=aFor(t.net,0.95); if(a<=0)return;
+      const p0=proj(t.pts[0][0],t.pts[0][1],z,w,h), p1=proj(t.pts[1][0],t.pts[1][1],z,w,h);
+      prims.push({d:(p0.d+p1.d)/2,draw:()=>{ ctx.globalAlpha=a; ctx.strokeStyle=netCol(t.net); ctx.lineWidth=Math.max(1,(t.w||0.1)*v3.s); ctx.lineCap='round';
+        ctx.beginPath(); ctx.moveTo(p0.x,p0.y); ctx.lineTo(p1.x,p1.y); ctx.stroke(); ctx.globalAlpha=1; }}); });
+    // pads / via-lands
+    if(drawPads)(L.pads||[]).forEach(p=>{ if(p.via&&!show.vias)return; const a=aFor(p.net,0.95); if(a<=0)return;
+      const q=proj(p.x,p.y,z,w,h);
+      prims.push({d:q.d,draw:()=>{ ctx.globalAlpha=a; ctx.fillStyle=netCol(p.net); ctx.beginPath(); ctx.arc(q.x,q.y,Math.max(1,(p.r||0.2)*v3.s),0,7); ctx.fill();
+        if(p.via){ ctx.globalAlpha=a; ctx.fillStyle='#0d1117'; ctx.beginPath(); ctx.arc(q.x,q.y,Math.max(0.5,(p.r||0.2)*v3.s*0.45),0,7); ctx.fill(); } ctx.globalAlpha=1; }}); });
   });
-  // vias
-  if(show.vias) PKG.vias.forEach(vv=>{ const zf=zpos(levelOf[vv.from],mid), zt=zpos(levelOf[vv.to],mid);
-    const a=proj(vv.x,vv.y,zf,w,h), b=proj(vv.x,vv.y,zt,w,h);
-    prims.push({d:(a.d+b.d)/2, draw:()=>{ ctx.globalAlpha=aFor(vv.net,vv.type==='pth'?0.8:0.55);
-      ctx.strokeStyle=netCol(vv.net); ctx.lineWidth=vv.type==='pth'?1.6:0.8; ctx.beginPath();
-      ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke(); ctx.globalAlpha=1; }}); });
+  // vias — vertical connectors between layers, with end dots
+  if(show.vias) PKG.vias.forEach(vv=>{ if(levelOf[vv.from]==null||levelOf[vv.to]==null)return;
+    const a=aFor(vv.net,1); if(a<=0)return;
+    const A=proj(vv.x,vv.y,zpos(levelOf[vv.from],mid),w,h), B=proj(vv.x,vv.y,zpos(levelOf[vv.to],mid),w,h);
+    prims.push({d:Math.min(A.d,B.d)-0.01,draw:()=>{ ctx.globalAlpha=Math.min(1,a*(vv.type==='pth'?0.95:0.85));
+      ctx.strokeStyle=netCol(vv.net); ctx.lineWidth=vv.type==='pth'?2:1.4; ctx.lineCap='round';
+      ctx.beginPath(); ctx.moveTo(A.x,A.y); ctx.lineTo(B.x,B.y); ctx.stroke();
+      ctx.fillStyle=netCol(vv.net); [A,B].forEach(P=>{ctx.beginPath();ctx.arc(P.x,P.y,2,0,7);ctx.fill();}); ctx.globalAlpha=1; }}); });
   // C4 bumps (between top metal and die)
   const zBump=zpos(n+0.4,mid);
   if(show.bumps) PKG.bumps.forEach(b=>{ const q=proj(b.x,b.y,zBump,w,h);
