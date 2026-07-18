@@ -28,6 +28,14 @@
  .lyr .solo{font-size:10px;border:1px solid #C1C7D0;background:#fff;border-radius:4px;padding:1px 5px;cursor:pointer;color:#5E6C84}
  .lyr .solo.on{background:#0052CC;color:#fff;border-color:#0052CC}
  .nets{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
+ .netbtns{display:flex;gap:6px;margin-top:5px}
+ .netlist{max-height:230px;overflow:auto;border:1px solid #EBECF0;border-radius:6px;padding:3px;margin-top:5px}
+ .nrow{display:flex;align-items:center;gap:6px;padding:3px 5px;border-radius:4px;font-size:12px;cursor:pointer}
+ .nrow:hover{background:#F4F5F7}
+ .nrow input{cursor:pointer}
+ .nrow .d{width:10px;height:10px;border-radius:50%;flex:0 0 auto}
+ .nrow .nn{flex:1;font-family:'SF Mono',Consolas,monospace}
+ .nrow .nc{color:#8993A4;font-size:11px}
  .net{display:flex;align-items:center;gap:5px;font-size:12px;border:1px solid #DFE1E6;border-radius:12px;padding:3px 9px;cursor:pointer;background:#fff}
  .net .d{width:11px;height:11px;border-radius:50%}
  .net.on{outline:2px solid #0052CC;font-weight:600}
@@ -71,8 +79,14 @@
       <button class="act" id="soloClr">Show all</button>
     </div>
 
-    <div class="sec">Highlight net</div>
-    <div class="nets" id="netList"></div>
+    <div class="sec">Nets — filter &amp; isolate</div>
+    <input type="text" class="txt" id="netFilter" placeholder="filter by name…  GND, VDD, NET01">
+    <div class="netbtns">
+      <button class="act" id="netAll">Select shown</button>
+      <button class="act" id="netNone">Clear</button>
+    </div>
+    <div class="hint" id="netCount"></div>
+    <div class="netlist" id="netList"></div>
 
     <div class="sec">Show</div>
     <div class="toggles" id="compToggles">
@@ -178,17 +192,19 @@ function buildSample(){
    {id:'SMB', name:'Soldermask — bottom',  type:'mask',  color:'#12694a'},
   ];
   const body=19, R=body/2-0.5;
-  // BGA balls
-  const balls=[], pn=15, pp=1.0, off=(pn-1)/2*pp;
+  const nm=n=>'NET'+String(n).padStart(3,'0');
+  const power=(i,j)=> ((i*7+j)%9===0)?'VDDIO' : ((i+j)%2?'VDD':'GND');   // core: power nets
+  // BGA balls — perimeter = individually-named signal nets, core = power
+  const balls=[], pn=15, pp=1.0, off=(pn-1)/2*pp; let sb=0;
   for(let i=0;i<pn;i++)for(let j=0;j<pn;j++){ const x=i*pp-off, y=j*pp-off;
     const ring=Math.min(i,j,pn-1-i,pn-1-j);
-    const net = ring<2 ? 'SIG' : ((i+j)%2?'VDD':'GND'); balls.push({x,y,net}); }
-  // die + C4 bumps
+    const net = ring<2 ? nm(sb++) : power(i,j); balls.push({x,y,net}); }
+  // die + C4 bumps — same signal names as balls (so a net spans bump→via→ball)
   const die={w:7,h:7};
-  const bumps=[], bn=14, bpp=0.4, boff=(bn-1)/2*bpp;
+  const bumps=[], bn=14, bpp=0.4, boff=(bn-1)/2*bpp; let bb=0;
   for(let i=0;i<bn;i++)for(let j=0;j<bn;j++){ const x=i*bpp-boff, y=j*bpp-boff;
     const ring=Math.min(i,j,bn-1-i,bn-1-j);
-    const net = ring<2 ? 'SIG' : ((i+j)%2?'VDD':'GND'); bumps.push({x,y,net}); }
+    const net = ring<2 ? nm(bb++) : power(i,j); bumps.push({x,y,net}); }
   // vias
   const vias=[];
   balls.forEach(b=>vias.push({x:b.x,y:b.y,from:'M4',to:'M3',net:b.net,type:'uvia'}));
@@ -214,12 +230,18 @@ function buildSample(){
 }
 
 // ---------------- state ----------------
-let PKG, vis={}, solo=null, hlNet=null, isCustom=false, lastJSON=null;
+let PKG, vis={}, solo=null, selNets=new Set(), isCustom=false, lastJSON=null;
 const show={balls:true,bumps:true,vias:true,die:true,planes:true};
 const v2={s:1, ox:0, oy:0};
 const v3={az:-0.62, el:0.52, s:1, explode:1.1};
-function netCol(n){ return (PKG.NET&&PKG.NET[n])||'#adb5bd'; }
-function aFor(net,base){ return !hlNet?base : (net===hlNet? Math.min(1,base+0.4):base*0.12); }
+function classOf(n){ return (n==='GND'||n==='VDD'||n==='VDDIO')?n:'SIG'; }
+function netCol(n){ return (PKG.NET&&PKG.NET[classOf(n)])||'#adb5bd'; }
+// no selection → show everything; else show only selected nets, HIDE the rest (alpha 0)
+function aFor(net,base){ return selNets.size===0 ? base : (selNets.has(net)?base:0); }
+function computeNets(pkg){ const m=new Map(), add=n=>{ if(n!=null)m.set(n,(m.get(n)||0)+1); };
+  (pkg.balls||[]).forEach(b=>add(b.net)); (pkg.bumps||[]).forEach(b=>add(b.net)); (pkg.vias||[]).forEach(v=>add(v.net));
+  Object.values(pkg.layers||{}).forEach(L=>{ (L.pads||[]).forEach(p=>add(p.net)); (L.planes||[]).forEach(p=>add(p.net)); (L.traces||[]).forEach(t=>add(t.net)); });
+  return [...m.entries()].map(([name,count])=>({name,count})).sort((a,b)=>a.name.localeCompare(b.name,undefined,{numeric:true})); }
 
 // ---------------- canvases / DPR ----------------
 function setup(cv){ const dpr=window.devicePixelRatio||1, w=cv.clientWidth, h=cv.clientHeight;
@@ -339,9 +361,19 @@ function buildLayerList(){ const el=$('layerList'); el.innerHTML='';
     el.appendChild(row); });
 }
 function buildNetList(){ const el=$('netList'); el.innerHTML='';
-  Object.keys(PKG.NET).forEach(n=>{ const b=document.createElement('div'); b.className='net'+(hlNet===n?' on':'');
-    b.innerHTML=`<span class="d" style="background:${PKG.NET[n]}"></span>${n}`;
-    b.onclick=()=>{ hlNet=(hlNet===n?null:n); buildNetList(); redraw(); }; el.appendChild(b); }); }
+  const filt=(($('netFilter').value)||'').toUpperCase();
+  const shown=(PKG._nets||[]).filter(n=>n.name.toUpperCase().includes(filt));
+  shown.forEach(n=>{ const row=document.createElement('label'); row.className='nrow';
+    row.innerHTML=`<input type="checkbox" ${selNets.has(n.name)?'checked':''}>
+      <span class="d" style="background:${netCol(n.name)}"></span>
+      <span class="nn">${n.name}</span><span class="nc">×${n.count}</span>`;
+    row.querySelector('input').onchange=e=>{ e.target.checked?selNets.add(n.name):selNets.delete(n.name); updNetCount(); redraw(); };
+    el.appendChild(row); });
+  if(!shown.length){ el.innerHTML='<div class="hint" style="padding:6px">no nets match “'+($('netFilter').value||'')+'”</div>'; }
+  updNetCount(shown.length); }
+function updNetCount(shownN){ const total=(PKG._nets||[]).length;
+  $('netCount').textContent = `${selNets.size} selected / ${total} nets`
+    + (selNets.size?' · isolating (rest hidden)':'') + (shownN!=null?` · ${shownN} shown`:''); }
 function updInfo(){ $('pkgName').textContent=PKG.name;
   $('pkgInfo').innerHTML=`<div class="info">Body <b>${PKG.body}×${PKG.body} mm</b></div>
     <div class="info">Metal layers <b>${PKG.info.metal}</b> · vias <b>${PKG.info.vias}</b></div>
@@ -350,7 +382,8 @@ function updLyrNow(){ $('lyrNow').textContent = solo? ('showing only: '+ (PKG.st
    : (Object.values(vis).filter(Boolean).length+' / '+PKG.stack.length+' layers shown'); }
 function redraw(){ draw2d(); draw3d(); updLyrNow(); }
 
-function loadPKG(p){ PKG=p; vis={}; PKG.stack.forEach(s=>vis[s.id]=true); solo=null; hlNet=null;
+function loadPKG(p){ PKG=p; vis={}; PKG.stack.forEach(s=>vis[s.id]=true); solo=null; selNets=new Set();
+  $('netFilter').value=''; PKG._nets=computeNets(PKG);
   if(!PKG.R)PKG.R=PKG.body/2-0.5;
   if(!PKG.info){ const nSig=PKG.stack.filter(s=>s.type==='signal'||s.type==='plane').length;
     PKG.info={metal:nSig,balls:(PKG.balls||[]).length,bumps:(PKG.bumps||[]).length,vias:(PKG.vias||[]).length}; }
@@ -360,6 +393,10 @@ function loadPKG(p){ PKG=p; vis={}; PKG.stack.forEach(s=>vis[s.id]=true); solo=n
 // ---- wiring ----
 $('allOn').onclick=()=>{ PKG.stack.forEach(s=>vis[s.id]=true); solo=null; buildLayerList(); redraw(); };
 $('soloClr').onclick=()=>{ solo=null; buildLayerList(); redraw(); };
+$('netFilter').oninput=()=>buildNetList();
+$('netAll').onclick=()=>{ const filt=($('netFilter').value||'').toUpperCase();
+  (PKG._nets||[]).filter(n=>n.name.toUpperCase().includes(filt)).forEach(n=>selNets.add(n.name)); buildNetList(); redraw(); };
+$('netNone').onclick=()=>{ selNets.clear(); buildNetList(); redraw(); };
 $('fit2d').onclick=()=>{ fit2d(); draw2d(); };
 $('reset3d').onclick=()=>{ v3.az=-0.62; v3.el=0.52; v3.s=fit3scale(); draw3d(); };
 ['balls','bumps','vias','die','planes'].forEach(k=>{ $('t'+k[0].toUpperCase()+k.slice(1)).onchange=e=>{ show[k]=e.target.checked; redraw(); }; });
@@ -384,7 +421,7 @@ function encodeState(){
   p.set('v3',[v3.az.toFixed(3),v3.el.toFixed(3),v3.s.toFixed(3),v3.explode.toFixed(2)].join(','));
   const hide=PKG.stack.filter(s=>!vis[s.id]).map(s=>s.id).join(','); if(hide)p.set('hide',hide);
   if(solo)p.set('solo',solo);
-  if(hlNet)p.set('net',hlNet);
+  if(selNets.size)p.set('nets',[...selNets].join('\n'));
   p.set('show',CK.map(k=>show[k]?1:0).join(''));
   const path=$('mcmPath').value.trim(); if(path)p.set('path',path);
   if(isCustom&&lastJSON)p.set('data',b64e(lastJSON));
@@ -393,7 +430,8 @@ function encodeState(){
 function applyState(p){
   if(p.has('show')){ const s=p.get('show'); CK.forEach((k,i)=>{ show[k]=s[i]!=='0'; const el=$('t'+k[0].toUpperCase()+k.slice(1)); if(el)el.checked=show[k]; }); }
   if(p.has('hide')){ const h=p.get('hide').split(','); PKG.stack.forEach(s=>vis[s.id]=!h.includes(s.id)); }
-  solo=p.get('solo')||null; hlNet=p.get('net')||null;
+  solo=p.get('solo')||null;
+  selNets = p.has('nets') ? new Set(p.get('nets').split('\n').filter(Boolean)) : new Set();
   if(p.has('path'))$('mcmPath').value=p.get('path');
   if(p.has('v2')){ const a=p.get('v2').split(',').map(Number); v2.s=a[0]; v2.ox=a[1]; v2.oy=a[2]; }
   if(p.has('v3')){ const a=p.get('v3').split(',').map(Number); v3.az=a[0]; v3.el=a[1]; v3.s=a[2]; v3.explode=a[3];
