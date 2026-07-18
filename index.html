@@ -44,7 +44,7 @@
  .toggles{display:flex;flex-wrap:wrap;gap:8px;font-size:12.5px;margin-top:4px}
  .toggles label{display:flex;align-items:center;gap:5px;cursor:pointer}
  button.act{border:1px solid #0052CC;background:#fff;color:#0052CC;border-radius:6px;padding:5px 10px;font-size:12px;font-weight:600;cursor:pointer;margin:3px 4px 0 0}
- button.act:hover{background:#0052CC;color:#fff}
+ button.act:hover,button.act.active{background:#0052CC;color:#fff}
  .viewhead{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
  .badge{display:inline-block;background:#FFF0B3;color:#974F0C;border:1px solid #FFE380;border-radius:4px;font-size:10.5px;font-weight:700;padding:2px 7px}
  canvas{display:block;width:100%;border-radius:6px;background:#0d1117;touch-action:none;cursor:grab}
@@ -120,13 +120,15 @@
     <div class="viewhead"><h3 style="margin:0">Figure 1 · 2-D layer view (top-down)</h3><span class="badge">DRAG PAN · WHEEL ZOOM</span></div>
     <canvas id="c2d" height="600"></canvas>
     <div style="margin-top:6px"><button class="act" id="fit2d">Fit</button>
+      <button class="act" id="ruler">📏 Measure</button>
+      <span class="hint" id="measOut" style="margin-left:6px"></span>
       <span class="hint" id="lyrNow" style="margin-left:6px"></span></div>
   </div>
  </div>
 
  <!-- ============ 3D (own full-width row, below) ============ -->
  <div class="card" style="margin-top:14px">
-   <div class="viewhead"><h3 style="margin:0">Figure 2 · 3-D exploded stack</h3><span class="badge">DRAG ORBIT · WHEEL ZOOM</span></div>
+   <div class="viewhead"><h3 style="margin:0">Figure 2 · 3-D exploded stack</h3><span class="badge">DRAG ORBIT · MID/RIGHT-DRAG PAN · WHEEL ZOOM</span></div>
    <canvas id="c3d" height="520"></canvas>
    <div class="sharerow">
      <button class="act" id="reset3d">Reset view</button>
@@ -319,9 +321,10 @@ async function loadOnlineSample(){ try{ const r=await fetch(SAMPLE_URL,{cache:'f
 
 // ---------------- state ----------------
 let PKG, vis={}, solo=null, selNets=new Set(), isCustom=false, lastJSON=null;
+let ruler=false, rpts=[];
 const show={balls:true,bumps:true,vias:true,die:true,planes:true};
 const v2={s:1, ox:0, oy:0};
-const v3={az:-0.62, el:0.52, s:1, explode:1.1, cx:0, cy:0};
+const v3={az:-0.62, el:0.52, s:1, explode:1.1, cx:0, cy:0, panx:0, pany:0};
 function classOf(n){ n=(''+n).toUpperCase();
   if(n==='VDDIO'||/VDDIO|VIO\b/.test(n)) return 'VDDIO';
   if(/GND|VSS|GROUND/.test(n)) return 'GND';
@@ -377,6 +380,17 @@ function draw2d(){
     ctx.strokeStyle='rgba(180,200,255,.55)'; ctx.setLineDash([5,4]); ctx.lineWidth=1.3;
     ctx.strokeRect(a[0],b[1],b[0]-a[0],a[1]-b[1]); ctx.setLineDash([]);
     ctx.fillStyle='rgba(180,200,255,.6)'; ctx.font='11px Segoe UI'; ctx.fillText('DIE '+d.w+'×'+d.h+'mm', a[0]+4, b[1]+13); }
+  // ruler / measure overlay
+  if(ruler&&rpts.length){ const P=rpts.map(p=>w2s(p[0],p[1],w,h));
+    if(P.length>=2){ ctx.strokeStyle='#ffd43b'; ctx.lineWidth=1.5; ctx.setLineDash([5,3]);
+      ctx.beginPath(); ctx.moveTo(P[0][0],P[0][1]); ctx.lineTo(P[1][0],P[1][1]); ctx.stroke(); ctx.setLineDash([]);
+      const dd=Math.hypot(rpts[1][0]-rpts[0][0],rpts[1][1]-rpts[0][1]);
+      const mx=(P[0][0]+P[1][0])/2, my=(P[0][1]+P[1][1])/2;
+      ctx.font='bold 12px Segoe UI'; const t=dd.toFixed(3)+' mm', tw=ctx.measureText(t).width;
+      ctx.fillStyle='rgba(13,17,23,.85)'; ctx.fillRect(mx+5,my-19,tw+8,16);
+      ctx.fillStyle='#ffd43b'; ctx.fillText(t, mx+9, my-7); }
+    P.forEach(q=>{ ctx.fillStyle='#ffd43b'; ctx.beginPath(); ctx.arc(q[0],q[1],4,0,7); ctx.fill();
+      ctx.strokeStyle='#0d1117'; ctx.lineWidth=1; ctx.stroke(); }); }
 }
 function drawLayer2d(ctx,w,h,s){
   const L=PKG.layers[s.id]||{planes:[],traces:[],pads:[]};
@@ -411,7 +425,7 @@ function drawDots2d(ctx,w,h,arr,rr,ring){ (arr||[]).forEach(b=>{ const q=w2s(b.x
 function proj(x,y,z,w,h){ x-=v3.cx; y-=v3.cy; const ca=Math.cos(v3.az),sa=Math.sin(v3.az),ce=Math.cos(v3.el),se=Math.sin(v3.el);
   const x1=x*ca-y*sa, y1=x*sa+y*ca, z1=z;
   const y2=y1*ce-z1*se, z2=y1*se+z1*ce;
-  return {x:w/2+x1*v3.s, y:h/2-z2*v3.s, d:y2}; }
+  return {x:w/2+x1*v3.s+v3.panx, y:h/2-z2*v3.s+v3.pany, d:y2}; }
 function zpos(level,mid){ return (level-mid)*2.0*v3.explode; }
 // in-plane basis: how a unit step in board x / y maps to screen (constant for orthographic) → lets us
 // draw a flat DISK on the tilted layer as a foreshortened ellipse instead of a camera-facing circle
@@ -536,7 +550,7 @@ $('netAll').onclick=()=>{ const filt=($('netFilter').value||'').toUpperCase();
 $('netNone').onclick=()=>{ selNets.clear(); buildNetList(); redraw(); };
 $('zoomSel').onclick=fitSelected;
 $('fit2d').onclick=()=>{ fit2d(); draw2d(); };
-$('reset3d').onclick=()=>{ v3.az=-0.62; v3.el=0.52; v3.cx=0; v3.cy=0; v3.s=fit3scale(); draw3d(); };
+$('reset3d').onclick=()=>{ v3.az=-0.62; v3.el=0.52; v3.cx=0; v3.cy=0; v3.panx=0; v3.pany=0; v3.s=fit3scale(); draw3d(); };
 ['balls','bumps','vias','die','planes'].forEach(k=>{ $('t'+k[0].toUpperCase()+k.slice(1)).onchange=e=>{ show[k]=e.target.checked; redraw(); }; });
 $('exp').oninput=e=>{ v3.explode=+e.target.value; $('vExp').textContent=v3.explode.toFixed(2)+'×'; draw3d(); };
 $('loadSample').onclick=()=>{ isCustom=false; lastJSON=null; $('mcmPath').value=''; loadPKG(buildSample()); v3.cx=0;v3.cy=0;v3.s=fit3scale(); draw3d(); };
@@ -559,7 +573,7 @@ const CK=['balls','bumps','vias','die','planes'];
 function encodeState(){
   const p=new URLSearchParams();
   p.set('v2',[v2.s.toFixed(3),v2.ox.toFixed(3),v2.oy.toFixed(3)].join(','));
-  p.set('v3',[v3.az.toFixed(3),v3.el.toFixed(3),v3.s.toFixed(3),v3.explode.toFixed(2),v3.cx.toFixed(2),v3.cy.toFixed(2)].join(','));
+  p.set('v3',[v3.az.toFixed(3),v3.el.toFixed(3),v3.s.toFixed(3),v3.explode.toFixed(2),v3.cx.toFixed(2),v3.cy.toFixed(2),v3.panx.toFixed(0),v3.pany.toFixed(0)].join(','));
   const hide=PKG.stack.filter(s=>!vis[s.id]).map(s=>s.id).join(','); if(hide)p.set('hide',hide);
   if(solo)p.set('solo',solo);
   if(selNets.size)p.set('nets',[...selNets].join('\n'));
@@ -576,7 +590,8 @@ function applyState(p){
   if(p.has('path'))$('mcmPath').value=p.get('path');
   if(p.has('v2')){ const a=p.get('v2').split(',').map(Number); v2.s=a[0]; v2.ox=a[1]; v2.oy=a[2]; }
   if(p.has('v3')){ const a=p.get('v3').split(',').map(Number); v3.az=a[0]; v3.el=a[1]; v3.s=a[2]; v3.explode=a[3];
-    if(a.length>5){ v3.cx=a[4]||0; v3.cy=a[5]||0; } $('exp').value=v3.explode; $('vExp').textContent=v3.explode.toFixed(2)+'×'; }
+    if(a.length>5){ v3.cx=a[4]||0; v3.cy=a[5]||0; } if(a.length>7){ v3.panx=a[6]||0; v3.pany=a[7]||0; }
+    $('exp').value=v3.explode; $('vExp').textContent=v3.explode.toFixed(2)+'×'; }
   buildLayerList(); buildNetList(); updLyrNow(); redraw();
 }
 $('share').onclick=()=>{ const url=location.origin+location.pathname+'#'+encodeState();
@@ -598,12 +613,24 @@ $('dl').onclick=async()=>{
 $('copyMsg').onclick=()=>{ const t=$('coMsg').textContent, ok=()=>{ const o=$('msgOk'); o.classList.add('show'); setTimeout(()=>o.classList.remove('show'),1600); };
   if(navigator.clipboard&&navigator.clipboard.writeText) navigator.clipboard.writeText(t).then(ok,()=>{}); else { const r=document.createRange(); r.selectNodeContents($('coMsg')); getSelection().removeAllRanges(); getSelection().addRange(r); ok(); } };
 
-// 2-D pan/zoom/hover
-(function(){ const cv=$('c2d'); let drag=false,lx=0,ly=0;
-  cv.onmousedown=e=>{drag=true;lx=e.offsetX;ly=e.offsetY;cv.style.cursor='grabbing';};
-  window.addEventListener('mouseup',()=>{drag=false;cv.style.cursor='grab';});
-  cv.onmousemove=e=>{ if(drag){ v2.ox-=(e.offsetX-lx)/v2.s; v2.oy+=(e.offsetY-ly)/v2.s; lx=e.offsetX;ly=e.offsetY; draw2d(); }
-    else hover(e); };
+// ruler / measure
+function updMeas(){ const o=$('measOut'); if(!ruler){ o.textContent=''; return; }
+  if(rpts.length<2){ o.textContent = rpts.length? 'click 2nd point…' : 'click two points to measure'; return; }
+  const a=rpts[0],b=rpts[1],dx=b[0]-a[0],dy=b[1]-a[1];
+  o.innerHTML=`d = <b>${Math.hypot(dx,dy).toFixed(3)} mm</b> (Δx ${dx.toFixed(3)}, Δy ${dy.toFixed(3)})`; }
+$('ruler').onclick=()=>{ ruler=!ruler; $('ruler').classList.toggle('active',ruler); rpts=[];
+  $('c2d').style.cursor=ruler?'crosshair':'grab'; updMeas(); draw2d(); };
+
+// 2-D pan/zoom/hover  (drag = pan, click = drop a measure point when the ruler is on)
+(function(){ const cv=$('c2d'); let drag=false,lx=0,ly=0,mdx=0,mdy=0,moved=false;
+  const toWorld=(ox,oy)=>{const w=cv.clientWidth,h=cv.clientHeight; return [v2.ox+(ox-w/2)/v2.s, v2.oy-(oy-h/2)/v2.s];};
+  cv.onmousedown=e=>{drag=true;lx=mdx=e.offsetX;ly=mdy=e.offsetY;moved=false;cv.style.cursor=ruler?'crosshair':'grabbing';};
+  window.addEventListener('mouseup',e=>{ if(!drag)return; drag=false; cv.style.cursor=ruler?'crosshair':'grab';
+    if(ruler&&!moved){ const r=cv.getBoundingClientRect(); if(rpts.length>=2)rpts=[];
+      rpts.push(toWorld(e.clientX-r.left,e.clientY-r.top)); updMeas(); draw2d(); } });
+  cv.onmousemove=e=>{ if(drag){ if(Math.hypot(e.offsetX-mdx,e.offsetY-mdy)>3)moved=true;
+      v2.ox-=(e.offsetX-lx)/v2.s; v2.oy+=(e.offsetY-ly)/v2.s; lx=e.offsetX;ly=e.offsetY; draw2d(); }
+    else if(!ruler) hover(e); };
   cv.onmouseleave=()=>{ $('tip').style.opacity=0; };
   cv.onwheel=e=>{ e.preventDefault(); const w=cv.clientWidth,h=cv.clientHeight;
     const wx=v2.ox+(e.offsetX-w/2)/v2.s, wy=v2.oy-(e.offsetY-h/2)/v2.s;
@@ -618,10 +645,13 @@ $('copyMsg').onclick=()=>{ const t=$('coMsg').textContent, ok=()=>{ const o=$('m
 
 // 3-D orbit/zoom
 function fit3scale(){ const cv=$('c3d'); return Math.min(cv.clientWidth,cv.clientHeight)/(PKG.body*1.5); }
-(function(){ const cv=$('c3d'); let drag=false,lx=0,ly=0;
-  cv.onmousedown=e=>{drag=true;lx=e.clientX;ly=e.clientY;cv.style.cursor='grabbing';$('spin').checked=false;spinning=false;};
-  window.addEventListener('mouseup',()=>{drag=false;cv.style.cursor='grab';});
-  window.addEventListener('mousemove',e=>{ if(!drag)return; v3.az+=(e.clientX-lx)*0.01; v3.el=Math.max(0.05,Math.min(1.4,v3.el+(e.clientY-ly)*0.01)); lx=e.clientX;ly=e.clientY; draw3d(); });
+(function(){ const cv=$('c3d'); let mode=null,lx=0,ly=0;
+  cv.onmousedown=e=>{ mode=(e.button===1||e.button===2||e.shiftKey)?'pan':'orbit'; lx=e.clientX;ly=e.clientY;
+    cv.style.cursor=mode==='pan'?'move':'grabbing'; $('spin').checked=false; spinning=false; if(e.button!==0)e.preventDefault(); };
+  cv.oncontextmenu=e=>e.preventDefault();   // let right-drag pan without a menu
+  window.addEventListener('mouseup',()=>{ if(mode){ mode=null; cv.style.cursor='grab'; } });
+  window.addEventListener('mousemove',e=>{ if(!mode)return; const dx=e.clientX-lx,dy=e.clientY-ly; lx=e.clientX;ly=e.clientY;
+    if(mode==='pan'){ v3.panx+=dx; v3.pany+=dy; } else { v3.az+=dx*0.01; v3.el=Math.max(0.05,Math.min(1.4,v3.el+dy*0.01)); } draw3d(); });
   cv.onwheel=e=>{ e.preventDefault(); v3.s*=Math.exp(-e.deltaY*0.0012); draw3d(); };
 })();
 let spinning=false;
