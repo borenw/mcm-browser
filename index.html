@@ -28,7 +28,9 @@
  .lyr .solo{font-size:10px;border:1px solid #C1C7D0;background:#fff;border-radius:4px;padding:1px 5px;cursor:pointer;color:#5E6C84}
  .lyr .solo.on{background:#0052CC;color:#fff;border-color:#0052CC}
  .nets{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
- .netbtns{display:flex;gap:6px;margin-top:5px}
+ .dlbtn{background:#fff;color:#0052CC;border:1px solid #fff;border-radius:6px;padding:8px 13px;font-size:12.5px;font-weight:700;cursor:pointer;white-space:nowrap;flex:0 0 auto;box-shadow:0 1px 3px rgba(9,30,66,.25)}
+ .dlbtn:hover{background:#DEEBFF}
+ .netbtns{display:flex;gap:6px;margin-top:5px;flex-wrap:wrap}
  .netlist{max-height:230px;overflow:auto;border:1px solid #EBECF0;border-radius:6px;padding:3px;margin-top:5px}
  .nrow{display:flex;align-items:center;gap:6px;padding:3px 5px;border-radius:4px;font-size:12px;cursor:pointer}
  .nrow:hover{background:#F4F5F7}
@@ -58,11 +60,14 @@
  a{color:#0052CC}
  footer{text-align:center;margin-top:20px;font-size:13px;color:#6B778C}
 </style></head><body>
-<div class="banner">
-  <h1>📦 MCM / Package Browser <span style="font-size:13px;font-weight:400;opacity:.85">— 2-D layers &amp; 3-D stack</span></h1>
-  <p>Browse a flip-chip <b>BGA-on-substrate</b> package: step through etch layers in 2-D, or orbit the exploded
-  3-D stack. Ships with a sample FCBGA; <b>Load JSON</b> to view a real design exported from a Cadence
-  <code>.mcm</code> (via <i>extracta</i> / IPC-2581 / ODB++ → this JSON schema).</p>
+<div class="banner" style="display:flex;justify-content:space-between;align-items:flex-start;gap:14px">
+  <div>
+    <h1>📦 MCM / Package Browser <span style="font-size:13px;font-weight:400;opacity:.85">— 2-D layers &amp; 3-D stack</span></h1>
+    <p>Browse a flip-chip <b>BGA-on-substrate</b> package: step through etch layers in 2-D, or orbit the exploded
+    3-D stack. Ships with a sample FCBGA; <b>Load JSON</b> to view a real design exported from a Cadence
+    <code>.mcm</code> (via <i>extracta</i> / IPC-2581 / ODB++ → this JSON schema).</p>
+  </div>
+  <button class="dlbtn" id="dl" title="Download this self-contained page (with the current design &amp; view) to run offline">⬇ Save to run locally</button>
 </div>
 <div class="wrap">
  <div class="top">
@@ -84,6 +89,7 @@
     <div class="netbtns">
       <button class="act" id="netAll">Select shown</button>
       <button class="act" id="netNone">Clear</button>
+      <button class="act" id="zoomSel" title="Fit 2-D &amp; 3-D to the selected nets">⤢ Zoom to selected</button>
     </div>
     <div class="hint" id="netCount"></div>
     <div class="netlist" id="netList"></div>
@@ -156,8 +162,10 @@
   }
 }</pre>
    <p style="font-size:13px">Getting there from Allegro: <b>extracta</b> (ASCII pad/net/geometry dump) → map to this JSON;
-   or export <b>IPC-2581</b> (XML) / <b>ODB++</b> and convert. Balls/bumps/vias also drop straight out of the
-   component &amp; padstack reports.</p>
+   or export <b>IPC-2581</b> (XML) / <b>ODB++</b> and convert; or a <b>SKILL/AXL</b> script that writes this JSON directly.
+   Balls/bumps/vias also drop straight out of the component &amp; padstack reports. Step-by-step routes:
+   <a href="https://github.com/borenw/mcm-browser/blob/main/EXPORT.md" target="_blank">EXPORT.md</a>.
+   The binary <code>.mcm</code> can't be parsed directly (proprietary) and there's no legit online converter — it must go through Allegro.</p>
  </details>
 
  <div class="card" style="margin-top:16px">
@@ -233,7 +241,7 @@ function buildSample(){
 let PKG, vis={}, solo=null, selNets=new Set(), isCustom=false, lastJSON=null;
 const show={balls:true,bumps:true,vias:true,die:true,planes:true};
 const v2={s:1, ox:0, oy:0};
-const v3={az:-0.62, el:0.52, s:1, explode:1.1};
+const v3={az:-0.62, el:0.52, s:1, explode:1.1, cx:0, cy:0};
 function classOf(n){ return (n==='GND'||n==='VDD'||n==='VDDIO')?n:'SIG'; }
 function netCol(n){ return (PKG.NET&&PKG.NET[classOf(n)])||'#adb5bd'; }
 // no selection → show everything; else show only selected nets, HIDE the rest (alpha 0)
@@ -251,6 +259,21 @@ function setup(cv){ const dpr=window.devicePixelRatio||1, w=cv.clientWidth, h=cv
 // ================= 2-D =================
 function fit2d(){ const cv=$('c2d'), w=cv.clientWidth,h=cv.clientHeight;
   v2.s=Math.min(w,h)/(PKG.body*1.18); v2.ox=0; v2.oy=0; }
+// discrete features (balls/bumps/vias/pads) belonging to the current selection (all if none selected)
+function selectedFeatures(){ const pts=[], inSel=n=>selNets.size===0||selNets.has(n);
+  (PKG.balls||[]).forEach(b=>{ if(inSel(b.net))pts.push(b); });
+  (PKG.bumps||[]).forEach(b=>{ if(inSel(b.net))pts.push(b); });
+  (PKG.vias||[]).forEach(v=>{ if(inSel(v.net))pts.push(v); });
+  Object.values(PKG.layers||{}).forEach(L=>(L.pads||[]).forEach(p=>{ if(inSel(p.net))pts.push(p); }));
+  return pts; }
+// fit BOTH views to the bounding box of the selected nets
+function fitSelected(){ const cv2=$('c2d'), cv3=$('c3d'), pts=selectedFeatures();
+  if(!pts.length){ fit2d(); v3.cx=0; v3.cy=0; v3.s=fit3scale(); redraw(); return; }
+  let x0=1e9,y0=1e9,x1=-1e9,y1=-1e9; pts.forEach(p=>{x0=Math.min(x0,p.x);y0=Math.min(y0,p.y);x1=Math.max(x1,p.x);y1=Math.max(y1,p.y);});
+  const cx=(x0+x1)/2, cy=(y0+y1)/2, w=Math.max(0.6,x1-x0), h=Math.max(0.6,y1-y0);
+  v2.ox=cx; v2.oy=cy; v2.s=Math.min(cv2.clientWidth/(w*1.3), cv2.clientHeight/(h*1.3));
+  v3.cx=cx; v3.cy=cy; v3.s=Math.min(cv3.clientWidth,cv3.clientHeight)/(Math.max(w,h)*1.7);
+  redraw(); }
 function w2s(x,y,w,h){ return [w/2+(x-v2.ox)*v2.s, h/2-(y-v2.oy)*v2.s]; }
 function draw2d(){
   const {ctx,w,h}=setup($('c2d'));
@@ -299,7 +322,7 @@ function drawDots2d(ctx,w,h,arr,rr,ring){ (arr||[]).forEach(b=>{ const q=w2s(b.x
   ctx.globalAlpha=1; }); }
 
 // ================= 3-D =================
-function proj(x,y,z,w,h){ const ca=Math.cos(v3.az),sa=Math.sin(v3.az),ce=Math.cos(v3.el),se=Math.sin(v3.el);
+function proj(x,y,z,w,h){ x-=v3.cx; y-=v3.cy; const ca=Math.cos(v3.az),sa=Math.sin(v3.az),ce=Math.cos(v3.el),se=Math.sin(v3.el);
   const x1=x*ca-y*sa, y1=x*sa+y*ca, z1=z;
   const y2=y1*ce-z1*se, z2=y1*se+z1*ce;
   return {x:w/2+x1*v3.s, y:h/2-z2*v3.s, d:y2}; }
@@ -397,8 +420,9 @@ $('netFilter').oninput=()=>buildNetList();
 $('netAll').onclick=()=>{ const filt=($('netFilter').value||'').toUpperCase();
   (PKG._nets||[]).filter(n=>n.name.toUpperCase().includes(filt)).forEach(n=>selNets.add(n.name)); buildNetList(); redraw(); };
 $('netNone').onclick=()=>{ selNets.clear(); buildNetList(); redraw(); };
+$('zoomSel').onclick=fitSelected;
 $('fit2d').onclick=()=>{ fit2d(); draw2d(); };
-$('reset3d').onclick=()=>{ v3.az=-0.62; v3.el=0.52; v3.s=fit3scale(); draw3d(); };
+$('reset3d').onclick=()=>{ v3.az=-0.62; v3.el=0.52; v3.cx=0; v3.cy=0; v3.s=fit3scale(); draw3d(); };
 ['balls','bumps','vias','die','planes'].forEach(k=>{ $('t'+k[0].toUpperCase()+k.slice(1)).onchange=e=>{ show[k]=e.target.checked; redraw(); }; });
 $('exp').oninput=e=>{ v3.explode=+e.target.value; $('vExp').textContent=v3.explode.toFixed(2)+'×'; draw3d(); };
 $('loadSample').onclick=()=>{ isCustom=false; lastJSON=null; $('mcmPath').value=''; loadPKG(buildSample()); };
@@ -418,7 +442,7 @@ const CK=['balls','bumps','vias','die','planes'];
 function encodeState(){
   const p=new URLSearchParams();
   p.set('v2',[v2.s.toFixed(3),v2.ox.toFixed(3),v2.oy.toFixed(3)].join(','));
-  p.set('v3',[v3.az.toFixed(3),v3.el.toFixed(3),v3.s.toFixed(3),v3.explode.toFixed(2)].join(','));
+  p.set('v3',[v3.az.toFixed(3),v3.el.toFixed(3),v3.s.toFixed(3),v3.explode.toFixed(2),v3.cx.toFixed(2),v3.cy.toFixed(2)].join(','));
   const hide=PKG.stack.filter(s=>!vis[s.id]).map(s=>s.id).join(','); if(hide)p.set('hide',hide);
   if(solo)p.set('solo',solo);
   if(selNets.size)p.set('nets',[...selNets].join('\n'));
@@ -435,7 +459,7 @@ function applyState(p){
   if(p.has('path'))$('mcmPath').value=p.get('path');
   if(p.has('v2')){ const a=p.get('v2').split(',').map(Number); v2.s=a[0]; v2.ox=a[1]; v2.oy=a[2]; }
   if(p.has('v3')){ const a=p.get('v3').split(',').map(Number); v3.az=a[0]; v3.el=a[1]; v3.s=a[2]; v3.explode=a[3];
-    $('exp').value=v3.explode; $('vExp').textContent=v3.explode.toFixed(2)+'×'; }
+    if(a.length>5){ v3.cx=a[4]||0; v3.cy=a[5]||0; } $('exp').value=v3.explode; $('vExp').textContent=v3.explode.toFixed(2)+'×'; }
   buildLayerList(); buildNetList(); updLyrNow(); redraw();
 }
 $('share').onclick=()=>{ const url=location.origin+location.pathname+'#'+encodeState();
@@ -443,6 +467,17 @@ $('share').onclick=()=>{ const url=location.origin+location.pathname+'#'+encodeS
   const done=()=>{ const o=$('shareOk'); o.classList.add('show'); setTimeout(()=>o.classList.remove('show'),1600); };
   if(navigator.clipboard&&navigator.clipboard.writeText) navigator.clipboard.writeText(url).then(done,()=>{$('shareOut').select();});
   else { $('shareOut').select(); done(); } };
+
+// ---- download self-contained page (with current design + view) to run offline ----
+$('dl').onclick=async()=>{
+  let html;
+  try{ const r=await fetch(location.href,{cache:'no-store'}); if(!r.ok)throw 0; html=await r.text(); }
+  catch(e){ html='<!DOCTYPE html>\n'+document.documentElement.outerHTML; }
+  const inj='<script>if(!location.hash)try{location.hash='+JSON.stringify('#'+encodeState())+'}catch(e){}<\/script>';
+  html=html.replace('<body>','<body>'+inj);
+  const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([html],{type:'text/html'}));
+  a.download='mcm-browser.html'; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(a.href),1500); };
 
 // 2-D pan/zoom/hover
 (function(){ const cv=$('c2d'); let drag=false,lx=0,ly=0;
