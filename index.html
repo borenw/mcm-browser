@@ -104,13 +104,16 @@
       <label><input type="checkbox" id="tPlanes" checked> planes</label>
     </div>
 
-    <div class="sec">Load design</div>
+    <div class="sec">Example</div>
+    <select id="example" class="txt">
+      <option value="mcm2die">2-die MCM on substrate · LGA (co-package)</option>
+      <option value="fcbga">FCBGA · flip-chip BGA</option>
+      <option value="led" selected>IPC-2581 · LED power board (live)</option>
+      <option value="switch">IPC-2581 · switch board — real, ~5 MB (live)</option>
+    </select>
+    <div class="sec">Load your own</div>
     <input type="text" class="txt" id="mcmPath" placeholder="/proj/lib/design.mcm">
-    <div style="margin-top:6px">
-      <button class="act" id="loadBtn">📂 Load IPC-2581 / JSON…</button>
-      <button class="act" id="loadOnline">🌐 IPC-2581 sample</button>
-      <button class="act" id="loadSample">FCBGA demo</button>
-    </div>
+    <div style="margin-top:6px"><button class="act" id="loadBtn">📂 Load IPC-2581 / JSON…</button></div>
     <input type="file" id="file" accept=".xml,.cvg,.json,.mcm,application/xml,application/json" style="display:none">
     <p class="hint">Load an <b>IPC-2581</b> <code>.xml</code> (what a coworker exports from a <code>.mcm</code>) or the package-JSON. Binary <code>.mcm</code> can't be parsed in-browser (see below). Path is saved into the share URL.</p>
   </div>
@@ -261,6 +264,50 @@ function buildSample(){
     info:{metal:nSig, balls:balls.length, bumps:bumps.length, vias:vias.length}};
 }
 
+// ---------------- synthetic 2-die co-package (2.5D-style) on a substrate, LGA底 ----------------
+function buildMCM2Die(){
+  const NET={GND:'#2f9e44',VDD:'#e03131',VDDIO:'#f08c00',SIG:'#4dabf7'};
+  const stack=[
+   {id:'SMT', name:'Soldermask — top',       type:'mask',  color:'#12694a'},
+   {id:'M1',  name:'M1 — die side / RDL',    type:'signal',color:'#e8a13a'},
+   {id:'M2',  name:'M2 — GND plane',         type:'plane', net:'GND', color:'#c46a24'},
+   {id:'CORE',name:'Core — PTH',             type:'core',  color:'#0c3b2c'},
+   {id:'M3',  name:'M3 — PWR plane',         type:'plane', net:'VDD', color:'#c46a24'},
+   {id:'M4',  name:'M4 — LGA land side',     type:'signal',color:'#e8a13a'},
+   {id:'SMB', name:'Soldermask — bottom',    type:'mask',  color:'#12694a'},
+  ];
+  const bodyW=26, bodyH=16;
+  const outline=[[-13,-8],[13,-8],[13,8],[-13,8]];
+  const dies=[{name:'DIE A',w:7,h:7,cx:-5.5,cy:0},{name:'DIE B',w:7,h:7,cx:5.5,cy:0}];
+  const L={}; stack.forEach(s=>L[s.id]={planes:[],traces:[],pads:[]});
+  L.M2.planes.push({poly:outline,net:'GND'}); L.M3.planes.push({poly:outline,net:'VDD'});
+  const bumps=[], vias=[], bn=12, bpp=0.42, boff=(bn-1)/2*bpp;
+  function mkBumps(die,tag){ const g=[];
+    for(let j=0;j<bn;j++){ g[j]=[]; for(let i=0;i<bn;i++){
+      const x=die.cx+i*bpp-boff, y=die.cy+j*bpp-boff, ring=Math.min(i,j,bn-1-i,bn-1-j);
+      const net = ring<2 ? tag+'_IO'+(j*bn+i) : ((i+j)%2?'VDD':'GND');
+      const b={x,y,net}; g[j][i]=b; bumps.push(b); } } return g; }
+  const A=mkBumps(dies[0],'A'), B=mkBumps(dies[1],'B');
+  // die-to-die links routed on M1: DIE A right column ↔ DIE B left column, shared D2D net + trace
+  for(let j=1;j<bn-1;j++){ const a=A[j][bn-1], b=B[j][0], net='D2D'+String(j).padStart(2,'0');
+    a.net=net; b.net=net; L.M1.traces.push({pts:[[a.x,a.y],[b.x,b.y]],w:0.05,net}); }
+  bumps.forEach(b=>{ vias.push({x:b.x,y:b.y,from:'M1',to:'M2',net:b.net,type:'uvia',r:0.09,drill:0.05});
+    L.M1.pads.push({x:b.x,y:b.y,r:0.11,net:b.net}); });
+  // LGA lands on the bottom (flat, no balls) + escape via to M3
+  const balls=[], lpx=1.0, lnx=22, lny=12, lox=(lnx-1)/2*lpx, loy=(lny-1)/2*lpx; let io=0;
+  for(let i=0;i<lnx;i++)for(let j=0;j<lny;j++){ const x=i*lpx-lox, y=j*lpx-loy;
+    if(Math.abs(x)>12.3||Math.abs(y)>7.3)continue;
+    const ring=Math.min(i,j,lnx-1-i,lny-1-j);
+    const net = ring<2 ? 'IO'+String(io++).padStart(3,'0') : ((i+j)%2?'VDD':'GND');
+    balls.push({x,y,net,r:0.35});
+    vias.push({x,y,from:'M4',to:'M3',net,type:'uvia',r:0.14,drill:0.08}); }
+  for(let x=-11;x<=11;x+=2)for(let y=-6;y<=6;y+=2) vias.push({x,y,from:'M2',to:'M3',net:((x+y)/2%2?'VDD':'GND'),type:'pth',r:0.16,drill:0.2});
+  const nSig=stack.filter(s=>s.type==='signal'||s.type==='plane').length;
+  return {name:'2-DIE MCM on substrate · LGA (synthetic)', body:Math.max(bodyW,bodyH), bbox:{w:bodyW,h:bodyH}, outline,
+    NET, stack, dies, die:null, ballStyle:'lga', bumps, balls, vias, layers:L,
+    info:{metal:nSig, vias:vias.length, balls:balls.length, bumps:bumps.length}};
+}
+
 // ---------------- IPC-2581 (open XML) parser → package-JSON ----------------
 const SAMPLE_URL='https://raw.githubusercontent.com/mgburr/ipc2581-to-kicad/master/samples/led_power_board.xml';
 function parseIPC2581(txt){
@@ -315,7 +362,7 @@ function parseIPC2581(txt){
     NET:{GND:'#2f9e44',VDD:'#e03131',VDDIO:'#f08c00',SIG:'#4dabf7'}, stack, die:null, bumps:[], balls:[], vias, layers,
     info:{metal:cu.length, vias:vias.length, balls:0, bumps:0} };
 }
-async function loadOnlineSample(){ try{ const r=await fetch(SAMPLE_URL,{cache:'force-cache'}); if(!r.ok)throw 0;
+async function loadOnlineSample(url){ try{ const r=await fetch(url||SAMPLE_URL,{cache:'force-cache'}); if(!r.ok)throw 0;
     const pk=parseIPC2581(await r.text()); isCustom=true; lastJSON=JSON.stringify(pk); loadPKG(pk); return true;
   }catch(e){ return false; } }
 
@@ -325,6 +372,7 @@ let ruler=false, rpts=[];
 const show={balls:true,bumps:true,vias:true,die:true,planes:true};
 const v2={s:1, ox:0, oy:0};
 const v3={az:-0.62, el:0.52, s:1, explode:1.1, cx:0, cy:0, panx:0, pany:0};
+function diesOf(pkg){ return pkg.dies || (pkg.die?[{...pkg.die,cx:pkg.die.cx||0,cy:pkg.die.cy||0,name:'DIE'}]:[]); }
 function classOf(n){ n=(''+n).toUpperCase();
   if(n==='VDDIO'||/VDDIO|VIO\b/.test(n)) return 'VDDIO';
   if(/GND|VSS|GROUND/.test(n)) return 'GND';
@@ -375,11 +423,11 @@ function draw2d(){
     if(solo? solo!==s.id : !vis[s.id]) continue;
     drawLayer2d(ctx,w,h,s);
   }
-  // die outline ghost
-  if(show.die&&PKG.die){ const d=PKG.die, a=w2s(-d.w/2,-d.h/2,w,h), b=w2s(d.w/2,d.h/2,w,h);
-    ctx.strokeStyle='rgba(180,200,255,.55)'; ctx.setLineDash([5,4]); ctx.lineWidth=1.3;
+  // die outline ghost(s) — supports multiple dies (co-package)
+  if(show.die) diesOf(PKG).forEach(d=>{ const a=w2s(d.cx-d.w/2,d.cy-d.h/2,w,h), b=w2s(d.cx+d.w/2,d.cy+d.h/2,w,h);
+    ctx.strokeStyle='rgba(180,200,255,.6)'; ctx.setLineDash([5,4]); ctx.lineWidth=1.3;
     ctx.strokeRect(a[0],b[1],b[0]-a[0],a[1]-b[1]); ctx.setLineDash([]);
-    ctx.fillStyle='rgba(180,200,255,.6)'; ctx.font='11px Segoe UI'; ctx.fillText('DIE '+d.w+'×'+d.h+'mm', a[0]+4, b[1]+13); }
+    ctx.fillStyle='rgba(180,200,255,.7)'; ctx.font='11px Segoe UI'; ctx.fillText((d.name||'DIE')+' '+d.w+'×'+d.h+'mm', a[0]+4, b[1]+13); });
   // ruler / measure overlay
   if(ruler&&rpts.length){ const P=rpts.map(p=>w2s(p[0],p[1],w,h));
     if(P.length>=2){ ctx.strokeStyle='#ffd43b'; ctx.lineWidth=1.5; ctx.setLineDash([5,3]);
@@ -416,7 +464,7 @@ function drawLayer2d(ctx,w,h,s){
   if(s.id==='M4'&&show.balls) drawDots2d(ctx,w,h,PKG.balls,0.34,true);
   if(s.id==='M1'&&show.bumps) drawDots2d(ctx,w,h,PKG.bumps,0.14,false);
 }
-function drawDots2d(ctx,w,h,arr,rr,ring){ (arr||[]).forEach(b=>{ const q=w2s(b.x,b.y,w,h), r=Math.max(1.5,rr*v2.s);
+function drawDots2d(ctx,w,h,arr,rr,ring){ (arr||[]).forEach(b=>{ const q=w2s(b.x,b.y,w,h), r=Math.max(1.5,(b.r||rr)*v2.s);
   ctx.globalAlpha=aFor(b.net, ring?0.95:0.9); ctx.fillStyle=netCol(b.net); ctx.beginPath(); ctx.arc(q[0],q[1],r,0,7); ctx.fill();
   if(ring){ ctx.globalAlpha=aFor(b.net,0.9); ctx.strokeStyle='rgba(255,255,255,.5)'; ctx.lineWidth=1; ctx.stroke(); }
   ctx.globalAlpha=1; }); }
@@ -482,19 +530,21 @@ function draw3d(){
   if(show.bumps) PKG.bumps.forEach(b=>{ const q=proj(b.x,b.y,zBump,w,h);
     prims.push({d:q.d, draw:()=>{ ctx.globalAlpha=aFor(b.net,0.95); ctx.fillStyle=netCol(b.net);
       ctx.beginPath(); ctx.arc(q.x,q.y,Math.max(1.3,0.13*v3.s),0,7); ctx.fill(); ctx.globalAlpha=1; }}); });
-  // BGA balls (below bottom)
-  const zBall=zpos(-1.3,mid);
-  if(show.balls) PKG.balls.forEach(b=>{ const q=proj(b.x,b.y,zBall,w,h);
-    prims.push({d:q.d, draw:()=>{ const r=Math.max(2,0.32*v3.s); ctx.globalAlpha=aFor(b.net,0.97);
-      const g=ctx.createRadialGradient(q.x-r*0.3,q.y-r*0.3,r*0.2,q.x,q.y,r);
-      g.addColorStop(0,'#fff'); g.addColorStop(0.25,netCol(b.net)); g.addColorStop(1,netCol(b.net));
-      ctx.fillStyle=g; ctx.beginPath(); ctx.arc(q.x,q.y,r,0,7); ctx.fill(); ctx.globalAlpha=1; }}); });
-  // die
-  if(show.die&&PKG.die){ const d=PKG.die, zD=zpos(n+1.5,mid);
-    const c=[[-d.w/2,-d.h/2],[d.w/2,-d.h/2],[d.w/2,d.h/2],[-d.w/2,d.h/2]].map(p=>proj(p[0],p[1],zD,w,h));
+  // bottom terminals — BGA balls (spheres, hang below) or LGA lands (flat disks on the bottom)
+  const lga=PKG.ballStyle==='lga', zBall=zpos(lga?-0.4:-1.3,mid);
+  if(show.balls) PKG.balls.forEach(b=>{ const a=aFor(b.net,0.97); if(a<=0)return; const q=proj(b.x,b.y,zBall,w,h);
+    prims.push({d:q.d, draw:()=>{ ctx.globalAlpha=a;
+      if(lga){ ctx.fillStyle=netCol(b.net); fillDisk(ctx,q,(b.r||0.35)); }
+      else { const r=Math.max(2,0.32*v3.s); const g=ctx.createRadialGradient(q.x-r*0.3,q.y-r*0.3,r*0.2,q.x,q.y,r);
+        g.addColorStop(0,'#fff'); g.addColorStop(0.25,netCol(b.net)); g.addColorStop(1,netCol(b.net));
+        ctx.fillStyle=g; ctx.beginPath(); ctx.arc(q.x,q.y,r,0,7); ctx.fill(); }
+      ctx.globalAlpha=1; }}); });
+  // die(s) — supports multiple (co-package)
+  if(show.die){ const zD=zpos(n+1.5,mid); diesOf(PKG).forEach(d=>{
+    const c=[[d.cx-d.w/2,d.cy-d.h/2],[d.cx+d.w/2,d.cy-d.h/2],[d.cx+d.w/2,d.cy+d.h/2],[d.cx-d.w/2,d.cy+d.h/2]].map(p=>proj(p[0],p[1],zD,w,h));
     prims.push({d:(c[0].d+c[2].d)/2+0.01, draw:()=>{ ctx.beginPath(); c.forEach((q,k)=>k?ctx.lineTo(q.x,q.y):ctx.moveTo(q.x,q.y)); ctx.closePath();
-      ctx.globalAlpha=.9; ctx.fillStyle='#2b3648'; ctx.fill(); ctx.strokeStyle='#8aa0c8'; ctx.lineWidth=1.3; ctx.stroke();
-      ctx.fillStyle='#aeb9cc'; ctx.font='bold 11px Segoe UI'; ctx.textAlign='center'; ctx.fillText('DIE', (c[0].x+c[2].x)/2,(c[0].y+c[2].y)/2+4); ctx.textAlign='left'; ctx.globalAlpha=1; }}); }
+      ctx.globalAlpha=.92; ctx.fillStyle='#2b3648'; ctx.fill(); ctx.strokeStyle='#8aa0c8'; ctx.lineWidth=1.3; ctx.stroke();
+      ctx.fillStyle='#aeb9cc'; ctx.font='bold 11px Segoe UI'; ctx.textAlign='center'; ctx.fillText(d.name||'DIE', (c[0].x+c[2].x)/2,(c[0].y+c[2].y)/2+4); ctx.textAlign='left'; ctx.globalAlpha=1; }}); }); }
   // painter's sort (far first) + draw
   prims.sort((a,b)=>b.d-a.d); prims.forEach(p=>p.draw());
 }
@@ -526,7 +576,10 @@ function updNetCount(shownN){ const total=(PKG._nets||[]).length;
     + (selNets.size?' · isolating (rest hidden)':'') + (shownN!=null?` · ${shownN} shown`:''); }
 function updInfo(){ $('pkgName').textContent=PKG.name;
   const bw=PKG.bbox?PKG.bbox.w:PKG.body, bh=PKG.bbox?PKG.bbox.h:PKG.body;
-  const bb=(PKG.balls.length||PKG.bumps.length)?`<div class="info">BGA balls <b>${PKG.info.balls}</b> · C4 bumps <b>${PKG.info.bumps}</b></div>`:'';
+  const term=PKG.ballStyle==='lga'?'LGA lands':'BGA balls';
+  const bits=[]; if(PKG.info.balls)bits.push(`${term} <b>${PKG.info.balls}</b>`); if(PKG.info.bumps)bits.push(`C4 bumps <b>${PKG.info.bumps}</b>`);
+  if(diesOf(PKG).length)bits.push(`dies <b>${diesOf(PKG).length}</b>`);
+  const bb=bits.length?`<div class="info">${bits.join(' · ')}</div>`:'';
   $('pkgInfo').innerHTML=`<div class="info">Body <b>${bw.toFixed(1)}×${bh.toFixed(1)} mm</b></div>
     <div class="info">Etch layers <b>${PKG.info.metal}</b> · vias <b>${PKG.info.vias}</b></div>`+bb; }
 function updLyrNow(){ $('lyrNow').textContent = solo? ('showing only: '+ (PKG.stack.find(s=>s.id===solo)||{}).name)
@@ -553,8 +606,14 @@ $('fit2d').onclick=()=>{ fit2d(); draw2d(); };
 $('reset3d').onclick=()=>{ v3.az=-0.62; v3.el=0.52; v3.cx=0; v3.cy=0; v3.panx=0; v3.pany=0; v3.s=fit3scale(); draw3d(); };
 ['balls','bumps','vias','die','planes'].forEach(k=>{ $('t'+k[0].toUpperCase()+k.slice(1)).onchange=e=>{ show[k]=e.target.checked; redraw(); }; });
 $('exp').oninput=e=>{ v3.explode=+e.target.value; $('vExp').textContent=v3.explode.toFixed(2)+'×'; draw3d(); };
-$('loadSample').onclick=()=>{ isCustom=false; lastJSON=null; $('mcmPath').value=''; loadPKG(buildSample()); v3.cx=0;v3.cy=0;v3.s=fit3scale(); draw3d(); };
-$('loadOnline').onclick=async()=>{ if(!await loadOnlineSample()) alert('Could not fetch the online IPC-2581 sample (offline, or blocked).'); else { v3.cx=0;v3.cy=0;v3.s=fit3scale(); draw3d(); } };
+const SWITCH_URL='https://raw.githubusercontent.com/mgburr/ipc2581-to-kicad/master/samples/SWITCH%20BOARD.xml';
+const EXAMPLES={ mcm2die:{build:buildMCM2Die}, fcbga:{build:buildSample}, led:{url:SAMPLE_URL}, switch:{url:SWITCH_URL} };
+async function loadExample(id){ const e=EXAMPLES[id]; if(!e)return false;
+  if(e.url){ $('example').disabled=true; const ok=await loadOnlineSample(e.url); $('example').disabled=false;
+    if(!ok){ alert('Could not fetch this online example (offline, or blocked).'); return false; } }
+  else { $('mcmPath').value=''; const pk=e.build(); loadPKG(pk); isCustom=true; lastJSON=JSON.stringify(pk); }
+  v3.cx=0; v3.cy=0; v3.panx=0; v3.pany=0; v3.s=fit3scale(); draw3d(); return true; }
+$('example').onchange=e=>loadExample(e.target.value);
 $('loadBtn').onclick=()=>$('file').click();
 $('file').onchange=e=>{ const f=e.target.files[0]; if(!f)return;
   if(!$('mcmPath').value.trim()) $('mcmPath').value=f.name; const rd=new FileReader();
